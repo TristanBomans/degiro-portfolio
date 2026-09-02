@@ -1042,6 +1042,9 @@
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   }
 
+  const CHART_RANGES = ['1W', '1M', 'YTD', '1Y', '3Y', '5Y', 'MAX'];
+  const ALWAYS_PERF_RANGES = new Set(['1W', '1M', 'YTD', 'MAX']);
+
   function getChartRangeBounds(rangeKey, dates) {
     if (!dates?.length) return [null, null];
     const lastDate = dates[dates.length - 1];
@@ -1057,15 +1060,27 @@
     return [dates[0], lastDate];
   }
 
+  function availablePerfRanges(dates) {
+    if (!dates?.length) return CHART_RANGES.filter((key) => ALWAYS_PERF_RANGES.has(key));
+    const first = dates[0];
+    return CHART_RANGES.filter((key) => {
+      if (ALWAYS_PERF_RANGES.has(key)) return true;
+      const [start] = getChartRangeBounds(key, dates);
+      return Boolean(start && first < start);
+    });
+  }
+
   function renderChartRangeButtons() {
-    const ranges = ['1W', '1M', 'YTD', '1Y', '3Y', '5Y', 'MAX'];
-    $('chart-range-selector').innerHTML = ranges.map((key) => `
+    $('chart-range-selector').innerHTML = CHART_RANGES.map((key) => `
       <button type="button" class="${key === state.selectedChartRange ? 'active' : ''}" data-range="${key}">${key}</button>
     `).join('');
   }
 
   function renderLotRangeButtons() {
-    const ranges = ['1W', '1M', 'YTD', '1Y', '3Y', '5Y', 'MAX'];
+    const ranges = availablePerfRanges(state.lotChartData?.dates);
+    if (!ranges.includes(state.selectedPerfRange)) {
+      state.selectedPerfRange = ranges.includes('MAX') ? 'MAX' : (ranges.includes('YTD') ? 'YTD' : ranges[0]);
+    }
     const el = $('lot-range-selector');
     if (!el) return;
     el.innerHTML = ranges.map((key) => `
@@ -2072,6 +2087,7 @@
         cost: lot.cost_eur,
         mode: 'lot',
       };
+      renderLotRangeButtons();
       lotChart.draw();
     } catch (err) {
       console.error('Failed to load lot chart', err);
@@ -2096,6 +2112,7 @@
         costs: data.costs || null,
         mode: 'position',
       };
+      renderLotRangeButtons();
       lotChart.draw();
     } catch (err) {
       console.error('Failed to load position chart', err);
