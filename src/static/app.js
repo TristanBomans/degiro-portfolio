@@ -1533,6 +1533,229 @@
 
   function openSettings() {
     $('settings-overlay').classList.add('show');
+    loadGmailStatus();
+  }
+
+  async function loadGmailStatus() {
+    try {
+      const resp = await fetch('/api/gmail/status');
+      const status = await resp.json();
+      if (!status.success) throw new Error(status.message || 'Failed to load Gmail status');
+      renderGmailStatus(status);
+      return status;
+    } catch (err) {
+      $('gmail-status-copy').textContent = `Could not load Gmail status: ${err.message}`;
+      return null;
+    }
+  }
+
+  function renderGmailStatus(status) {
+    const copy = $('gmail-status-copy');
+    const setup = $('gmail-setup');
+    const account = $('gmail-account');
+    const scanBtn = $('gmail-scan-btn');
+    const sidebarScan = $('sidebar-scan-btn');
+    const disconnectBtn = $('gmail-disconnect-btn');
+
+    setup.hidden = Boolean(status.connected);
+    account.hidden = !status.connected;
+    scanBtn.hidden = !status.connected;
+    if (sidebarScan) sidebarScan.hidden = !status.connected;
+    disconnectBtn.hidden = !status.connected;
+
+    if (status.connected) {
+      $('gmail-account-email').textContent = status.email || 'Connected mailbox';
+      const proto = status.secure ? 'SSL/TLS' : 'STARTTLS';
+      $('gmail-account-meta').textContent = `${status.host}:${status.port} · ${proto}`;
+      const last = status.lastScan
+        ? ` Last scan ${new Date(status.lastScan).toLocaleString()}.`
+        : '';
+      copy.textContent = `Inbox connected.${last} Scan adds DEGIRO confirmation fills without replacing history.`;
+    } else {
+      copy.textContent = 'Same credentials as Easereader: Gmail address plus an app password. The inbox is read over IMAP (SMTP can only send).';
+    }
+  }
+
+  async function saveGmailCredentials() {
+    const user = $('mailbox-user')?.value.trim();
+    const password = $('mailbox-password')?.value.trim();
+    const host = $('mailbox-host')?.value.trim();
+    const port = parseInt($('mailbox-port')?.value, 10);
+    const secure = $('mailbox-secure')?.checked !== false;
+    if (!user || !password) {
+      showToast('Email and app password are required.', false);
+      return;
+    }
+    const btn = $('gmail-save-credentials');
+    btn.classList.add('loading');
+    try {
+      const resp = await fetch('/api/gmail/credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user, password, host, port, secure }),
+      });
+      const result = await resp.json();
+      if (!result.success) {
+        showToast(result.message || 'Could not connect mailbox', false);
+        return;
+      }
+      $('mailbox-password').value = '';
+      renderGmailStatus(result);
+      showToast(`Connected ${result.email}`, true);
+    } catch (err) {
+      showToast(`Could not connect mailbox: ${err.message}`, false);
+    } finally {
+      btn.classList.remove('loading');
+    }
+  }
+
+  function applyMailboxPreset(name) {
+    if (name === 'outlook') {
+      $('mailbox-host').value = 'outlook.office365.com';
+      $('mailbox-port').value = '993';
+      $('mailbox-secure').checked = true;
+      return;
+    }
+    $('mailbox-host').value = 'imap.gmail.com';
+    $('mailbox-port').value = '993';
+    $('mailbox-secure').checked = true;
+  }
+
+  async function scanGmailConfirmations() {
+    setSidebarOpen(false);
+    closeOverlay('settings-overlay');
+    state.uploadInProgress = true;
+    let current = 12;
+    showProgress('Scanning mailbox confirmations…', current);
+    const tick = setInterval(() => {
+      if (current < 88) {
+        current = Math.min(88, current + Math.random() * 8);
+        showProgress('Reading DEGIRO confirmation emails…', current);
+      }
+    }, 600);
+    try {
+      const resp = await fetch('/api/gmail/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const result = await resp.json();
+      clearInterval(tick);
+      hideProgress();
+      if (!result.success) {
+        showToast(result.message || 'Mailbox scan failed', false);
+        return;
+      }
+      if (!result.fills?.length) {
+        showToast(result.message || 'No DEGIRO confirmation emails found', true);
+        return;
+      }
+      openScanPreview(result);
+    } catch (err) {
+      clearInterval(tick);
+      hideProgress();
+      showToast(`Mailbox scan failed: ${err.message}`, false);
+    } finally {
+      state.uploadInProgress = false;
+    }
+  }
+
+  function fillSideLabel(quantity) {
+    return Number(quantity) < 0 ? 'Sell' : 'Buy';
+  }
+
+  function formatScanWhen(fill) {
+    const match = String(fill.date || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    const date = match ? `${match[3]}-${match[2]}-${match[1]}` : (fill.date || '');
+    const time = fill.time ? String(fill.time).slice(0, 8) : '';
+    return [date, time].filter(Boolean).join(' ');
+  }
+
+  function fillTimestamp(fill) {
+    return `${fill.date || ''}T${fill.time || '00:00:00'}`;
+  }
+
+  function openScanPreview(result) {
+    const fills = [...(result.fills || [])].sort((a, b) => fillTimestamp(b).localeCompare(fillTimestamp(a)));
+    const newFills = fills.filter((fill) => !fill.duplicate);
+    const rows = fills.map((fill) => {
+      const qty = Math.abs(Number(fill.quantity) || 0);
+      const side = fillSideLabel(fill.quantity);
+      const when = formatScanWhen(fill);
+      const checkbox = fill.duplicate
+        ? '<input type="checkbox" disabled>'
+        : `<input type="checkbox" data-fill-id="${escapeHtml(fill.id)}" checked>`;
+      const flag = fill.duplicate ? '<div class="scan-fill-flag">Already in portfolio</div>' : '';
+      return `
+        <label class="scan-fill${fill.duplicate ? ' is-duplicate' : ''}">
+          ${checkbox}
+          <div class="scan-fill-copy">
+            <div class="scan-fill-title">${escapeHtml(fill.product || 'Unknown product')}</div>
+            <div class="scan-fill-meta">${escapeHtml(side)} ${qty} · ${escapeHtml(fill.isin)} · ${escapeHtml(when)}</div>
+            ${flag}
+          </div>
+          <div class="scan-fill-amount">${formatSignedEur(Number(fill.totalEur) || 0)}</div>
+        </label>
+      `;
+    }).join('');
+
+    const summary = result.newCount
+      ? `I found ${result.newCount} fill${result.newCount === 1 ? '' : 's'} that can be added.${result.duplicateCount ? ` ${result.duplicateCount} already in the portfolio.` : ''} Confirm to import the selected ones.`
+      : 'Everything I found is already in the portfolio.';
+
+    $('scan-overlay').innerHTML = `
+      <div class="dialog dialog-scan" role="dialog" aria-labelledby="scan-title">
+        <h3 id="scan-title">Mailbox scan</h3>
+        <p class="scan-summary">${escapeHtml(summary)}</p>
+        <div class="scan-fills">${rows}</div>
+        <div class="dialog-actions">
+          <button class="btn btn-outline" data-close-scan type="button">Cancel</button>
+          <button class="btn btn-primary" id="scan-import-btn" type="button" ${result.newCount ? '' : 'disabled'}>Add selected</button>
+        </div>
+      </div>
+    `;
+    $('scan-overlay').classList.add('show');
+    const importBtn = $('scan-import-btn');
+    if (importBtn && result.newCount) {
+      importBtn.onclick = () => confirmScanImport(result.token);
+    }
+  }
+
+  async function confirmScanImport(token) {
+    const fillIds = [...document.querySelectorAll('#scan-overlay [data-fill-id]:checked')].map((el) => el.dataset.fillId);
+    if (!fillIds.length) {
+      showToast('Select at least one fill to add.', false);
+      return;
+    }
+    closeOverlay('scan-overlay');
+    state.uploadInProgress = true;
+    showProgress('Adding selected fills…', 30);
+    try {
+      const resp = await fetch('/api/gmail/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, fillIds }),
+      });
+      const result = await resp.json();
+      if (!result.success) {
+        hideProgress();
+        showToast(result.message || 'Import failed', false);
+        return;
+      }
+      showProgress('Done', 100);
+      setTimeout(() => {
+        hideProgress();
+        showToast(result.message + (result.newTransactions ? ' — reloading…' : ''), true);
+        if (result.newTransactions > 0) {
+          setTimeout(() => window.location.reload(), 1600);
+        }
+      }, 400);
+    } catch (err) {
+      hideProgress();
+      showToast(`Import failed: ${err.message}`, false);
+    } finally {
+      state.uploadInProgress = false;
+    }
   }
 
   function openConfirm(title, message, confirmLabel, onConfirm) {
@@ -1982,6 +2205,22 @@
     $('settings-overlay').addEventListener('click', (e) => {
       if (e.target === $('settings-overlay')) closeOverlay('settings-overlay');
     });
+    $('gmail-save-credentials').addEventListener('click', saveGmailCredentials);
+    document.querySelectorAll('[data-mail-preset]').forEach((btn) => {
+      btn.addEventListener('click', () => applyMailboxPreset(btn.dataset.mailPreset));
+    });
+    $('gmail-scan-btn').addEventListener('click', () => scanGmailConfirmations());
+    $('sidebar-scan-btn').addEventListener('click', () => scanGmailConfirmations());
+    $('gmail-disconnect-btn').addEventListener('click', async () => {
+      try {
+        const resp = await fetch('/api/gmail/disconnect', { method: 'POST' });
+        const result = await resp.json();
+        showToast(result.message || 'Mailbox disconnected', result.success);
+        if (result.success) await loadGmailStatus();
+      } catch (err) {
+        showToast(`Disconnect failed: ${err.message}`, false);
+      }
+    });
     $('live-refresh-btn').addEventListener('click', () => refreshLivePrices(true));
     $('include-other-brokers').addEventListener('change', async (e) => {
       state.includeOtherBrokers = e.target.checked;
@@ -2060,6 +2299,9 @@
     $('confirm-overlay').addEventListener('click', (e) => {
       if (e.target === $('confirm-overlay') || e.target.closest('[data-close-confirm]')) closeOverlay('confirm-overlay');
     });
+    $('scan-overlay').addEventListener('click', (e) => {
+      if (e.target === $('scan-overlay') || e.target.closest('[data-close-scan]')) closeOverlay('scan-overlay');
+    });
     $('other-brokers-content').addEventListener('click', (e) => {
       const btn = e.target.closest('[data-delete-holding]');
       if (!btn) return;
@@ -2099,6 +2341,7 @@
         closeOverlay('settings-overlay');
         closeOverlay('manual-overlay');
         closeOverlay('confirm-overlay');
+        closeOverlay('scan-overlay');
       }
     });
   }
@@ -2127,6 +2370,7 @@
       loadPerformance(),
       initTimeTravel(),
       loadOtherBrokersPanel(),
+      loadGmailStatus(),
     ]);
 
     state.hasData = Boolean(

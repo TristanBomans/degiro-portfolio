@@ -1,12 +1,15 @@
+const crypto = require('crypto');
 const express = require('express');
 const path = require('path');
 const multer = require('multer');
 const packageJson = require('../package.json');
-const { config } = require('./config');
+const { config, col } = require('./config');
 const { getDb, initDb } = require('./database');
 const { resolveTickerFromIsin } = require('./tickerResolver');
 const { fetchStockPrices, fetchManualHoldingPrices, fetchIndexPrices, fetchLiveQuote, persistManualLivePriceSnapshot } = require('./priceFetcher');
-const { processTransactionFile, processAccountFile } = require('./importData');
+const { processTransactionFile, processAccountFile, processConfirmationRows, previewConfirmationRows } = require('./importData');
+const gmail = require('./gmail');
+const { parseConfirmationEmail } = require('./parseConfirmationEmail');
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -1550,6 +1553,192 @@ app.post('/api/upload-transactions', upload.single('file'), async (req, res) => 
   } catch (err) {
     console.error('Upload error:', err);
     res.status(500).json({ success: false, message: `Error processing file: ${err.message}` });
+  }
+});
+
+async function fetchPricesForStocks(stockIds) {
+  const db = getDb();
+  let totalPrices = 0;
+  for (const stockId of stockIds) {
+    const stock = db.prepare('SELECT * FROM stocks WHERE id = ?').get(stockId);
+    if (!stock) continue;
+    const count = await fetchStockPrices(stock);
+    if (count > 0) totalPrices += count;
+  }
+  return totalPrices;
+}
+
+const pendingMailboxImports = new Map();
+const PENDING_IMPORT_TTL_MS = 30 * 60 * 1000;
+
+function prunePendingImports() {
+  const cutoff = Date.now() - PENDING_IMPORT_TTL_MS;
+  for (const [token, pending] of pendingMailboxImports) {
+    if (pending.createdAt < cutoff) pendingMailboxImports.delete(token);
+  }
+}
+
+function serializeFill(messageId, emailSubject, row, duplicate) {
+  return {
+    id: `${messageId}:${row[col('transaction_id')] || crypto.randomBytes(6).toString('hex')}`,
+    messageId,
+    emailSubject,
+    product: row[col('product')] || '',
+    isin: row[col('isin')] || '',
+    date: String(row[col('date')] || '').slice(0, 10),
+    time: row[col('time')] || '',
+    quantity: row[col('quantity')],
+    price: row[col('price')],
+    currency: row[col('currency')] || 'EUR',
+    valueEur: row[col('value_eur')],
+    totalEur: row[col('total_eur')],
+    feesEur: row[col('fees_eur')],
+    transactionId: row[col('transaction_id')] || '',
+    venue: row[col('venue')] || '',
+    duplicate,
+  };
+}
+
+app.get('/api/gmail/status', (_req, res) => {
+  try {
+    res.json({ success: true, ...gmail.getStatus() });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/gmail/credentials', async (req, res) => {
+  try {
+    const status = await gmail.saveMailboxCredentials({
+      user: req.body?.user,
+      password: req.body?.password,
+      host: req.body?.host,
+      port: req.body?.port,
+      secure: req.body?.secure,
+    });
+    res.json({ success: true, ...status });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/gmail/disconnect', (_req, res) => {
+  try {
+    gmail.disconnectMailbox();
+    res.json({ success: true, message: 'Mailbox disconnected' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/gmail/scan', async (req, res) => {
+  try {
+    prunePendingImports();
+    const emails = await gmail.fetchConfirmationEmails();
+
+    const fills = [];
+    const pendingFills = [];
+    let emailsFailed = 0;
+    const parseErrors = [];
+
+    for (const email of emails) {
+      try {
+        const rows = parseConfirmationEmail(email.raw, `${email.id}.eml`);
+        if (!rows.length) {
+          emailsFailed++;
+          parseErrors.push(`No transactions parsed from ${email.subject || email.id}`);
+          continue;
+        }
+        for (const { row, duplicate } of previewConfirmationRows(rows)) {
+          const fill = serializeFill(email.id, email.subject || '', row, duplicate);
+          fills.push(fill);
+          pendingFills.push({ ...fill, row });
+        }
+      } catch (err) {
+        emailsFailed++;
+        parseErrors.push(err.message);
+        console.error(`Mailbox confirmation parse failed for ${email.id}:`, err.message);
+      }
+    }
+
+    pendingFills.sort((a, b) => `${b.date || ''}T${b.time || ''}`.localeCompare(`${a.date || ''}T${a.time || ''}`));
+    fills.sort((a, b) => `${b.date || ''}T${b.time || ''}`.localeCompare(`${a.date || ''}T${a.time || ''}`));
+
+    const token = crypto.randomBytes(16).toString('hex');
+    pendingMailboxImports.set(token, { fills: pendingFills, createdAt: Date.now() });
+    gmail.setLastScan();
+
+    const newCount = fills.filter((fill) => !fill.duplicate).length;
+    const duplicateCount = fills.length - newCount;
+    let message = `Found ${newCount} new fill${newCount === 1 ? '' : 's'}`;
+    if (duplicateCount > 0) message += ` · ${duplicateCount} already in the portfolio`;
+    if (!fills.length) message = 'No DEGIRO confirmation emails found';
+
+    res.json({
+      success: true,
+      token,
+      message,
+      fills,
+      newCount,
+      duplicateCount,
+      emailsFound: emails.length,
+      emailsFailed,
+      parseErrors: parseErrors.slice(0, 5),
+    });
+  } catch (err) {
+    console.error('Mailbox scan error:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/gmail/import', async (req, res) => {
+  try {
+    prunePendingImports();
+    const token = String(req.body?.token || '');
+    const pending = pendingMailboxImports.get(token);
+    if (!pending) {
+      return res.status(400).json({ success: false, message: 'Scan expired. Scan again to preview fills.' });
+    }
+
+    const requested = Array.isArray(req.body?.fillIds) ? req.body.fillIds.map(String) : null;
+    const selected = pending.fills.filter((fill) => {
+      if (fill.duplicate) return false;
+      if (!requested) return true;
+      return requested.includes(fill.id);
+    });
+
+    if (!selected.length) {
+      pendingMailboxImports.delete(token);
+      return res.json({ success: true, message: 'Nothing selected to add', newTransactions: 0 });
+    }
+
+    const imported = await processConfirmationRows(selected.map((fill) => fill.row));
+    const importedMessageIds = new Set(selected.map((fill) => fill.messageId));
+    for (const fill of selected) {
+      gmail.markImported(fill.messageId, fill.emailSubject || fill.product, 1);
+    }
+    pendingMailboxImports.delete(token);
+
+    let totalPrices = 0;
+    if (imported.newTransactions > 0 && imported.stockIdsToFetch.length) {
+      totalPrices = await fetchPricesForStocks(imported.stockIdsToFetch);
+    }
+
+    const parts = [`Added ${imported.newTransactions} transaction${imported.newTransactions === 1 ? '' : 's'}`];
+    if (imported.updatedStocks > 0) parts.push(`${imported.updatedStocks} new holding${imported.updatedStocks === 1 ? '' : 's'}`);
+    if (imported.skippedDuplicates > 0) parts.push(`${imported.skippedDuplicates} already in the portfolio`);
+    if (importedMessageIds.size > 0) parts.push(`${importedMessageIds.size} email${importedMessageIds.size === 1 ? '' : 's'}`);
+    if (totalPrices > 0) parts.push(`fetched ${totalPrices} prices`);
+
+    res.json({
+      success: true,
+      message: parts.join(' · '),
+      newTransactions: imported.newTransactions,
+      skippedDuplicates: imported.skippedDuplicates,
+    });
+  } catch (err) {
+    console.error('Mailbox import error:', err);
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 

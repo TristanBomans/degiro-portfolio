@@ -108,6 +108,13 @@ function initDb() {
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS gmail_imports (
+      message_id TEXT PRIMARY KEY,
+      subject TEXT,
+      imported_at TEXT,
+      transaction_count INTEGER DEFAULT 0
+    );
+
     -- Manual / other-broker holdings
     CREATE TABLE IF NOT EXISTS manual_holdings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

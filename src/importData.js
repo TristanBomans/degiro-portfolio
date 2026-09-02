@@ -4,7 +4,7 @@
 const XLSX = require('xlsx');
 const { getDb } = require('./database');
 const { config, col } = require('./config');
-const { getTickerForStock } = require('./tickerResolver');
+const { parseConfirmationEmail } = require('./parseConfirmationEmail');
 
 /**
  * Normalize DEGIRO column headers to canonical names by position.
@@ -54,18 +54,18 @@ function parseDate(dateVal, timeStr) {
 
   const dateStr = String(dateVal);
 
+  const timePart = formatTimePart(timeStr);
+
   // Try DD-MM-YYYY or DD/MM/YYYY format (DEGIRO day-first)
   const dayFirstMatch = dateStr.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
   if (dayFirstMatch) {
     const [, day, month, year] = dayFirstMatch;
-    const timePart = typeof timeStr === 'string' && timeStr.includes(':') ? `T${timeStr}:00` : 'T00:00:00';
     return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}${timePart}`;
   }
 
   // Try YYYY-MM-DD
   const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (isoMatch) {
-    const timePart = typeof timeStr === 'string' && timeStr.includes(':') ? `T${timeStr}:00` : 'T00:00:00';
     return `${dateStr}${timePart}`;
   }
 
@@ -73,6 +73,15 @@ function parseDate(dateVal, timeStr) {
   const parsed = new Date(`${dateStr} ${timeStr || ''}`);
   if (isNaN(parsed.getTime())) return null;
   return parsed.toISOString();
+}
+
+function formatTimePart(timeStr) {
+  if (typeof timeStr !== 'string' || !timeStr.includes(':')) return 'T00:00:00';
+  const parts = timeStr.split(':');
+  const hours = (parts[0] || '00').padStart(2, '0');
+  const minutes = (parts[1] || '00').padStart(2, '0');
+  const seconds = (parts[2] || '00').replace(/\D/g, '').padStart(2, '0').slice(0, 2);
+  return `T${hours}:${minutes}:${seconds}`;
 }
 
 /**
@@ -99,8 +108,6 @@ function determineNativeCurrency(rows, product) {
  * Returns { newTransactions, updatedStocks, stockIdsToFetch }.
  */
 async function processTransactionFile(buffer, filename) {
-  const db = getDb();
-
   // Read workbook
   const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
   const sheetName = workbook.SheetNames[0];
@@ -123,11 +130,41 @@ async function processTransactionFile(buffer, filename) {
     return mapped;
   });
 
+  const scales = detectImpliedDecimalScales(rows);
+  return importCanonicalRows(rows, scales);
+}
+
+function detectImpliedDecimalScales(rows) {
+  let priceScale = 1;
+  let eurScale = 1;
+  let fxScale = 1;
+  const sampleRates = rows
+    .map((r) => parseFloat(r[col('exchange_rate')]))
+    .filter((v) => v && !isNaN(v) && v !== 0);
+  const samplePrices = rows
+    .map((r) => parseFloat(r[col('price')]))
+    .filter((v) => v && !isNaN(v) && v !== 0);
+  const hasScaledRates = sampleRates.length > 0 && sampleRates.every((v) => Math.abs(v) > 100);
+  const hasScaledPrices = samplePrices.length > 0 && samplePrices.every((v) => Number.isInteger(v) && Math.abs(v) > 10000);
+  if (hasScaledRates || hasScaledPrices) {
+    priceScale = 10000;
+    eurScale = 100;
+    fxScale = 10000;
+  }
+  return { priceScale, eurScale, fxScale };
+}
+
+/**
+ * Insert canonical DEGIRO rows without wiping existing data.
+ */
+async function importCanonicalRows(rows, scales = { priceScale: 1, eurScale: 1, fxScale: 1 }) {
+  const db = getDb();
+  const { priceScale, eurScale, fxScale } = scales;
   let newTransactions = 0;
   let updatedStocks = 0;
+  let skippedDuplicates = 0;
   const stockIdsToFetch = new Set();
 
-  // Pre-resolve tickers for all new ISINs before the synchronous transaction
   const tickerCache = new Map();
   for (const row of rows) {
     const isin = row[col('isin')];
@@ -150,27 +187,6 @@ async function processTransactionFile(buffer, filename) {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  // Detect DEGIRO implicit-decimal format: exchange rates and prices are stored
-  // as integers with 4 implied decimal places, EUR amounts with 2 implied places.
-  // Detect by checking if exchange_rate values are all > 100 (real rates are 0.5–2.0),
-  // or if no FX data, check if all prices are large integers (>10000 means >1.0 real).
-  let priceScale = 1;
-  let eurScale = 1;
-  let fxScale = 1;
-  const sampleRates = rows
-    .map((r) => parseFloat(r[col('exchange_rate')]))
-    .filter((v) => v && !isNaN(v) && v !== 0);
-  const samplePrices = rows
-    .map((r) => parseFloat(r[col('price')]))
-    .filter((v) => v && !isNaN(v) && v !== 0);
-  const hasScaledRates = sampleRates.length > 0 && sampleRates.every((v) => Math.abs(v) > 100);
-  const hasScaledPrices = samplePrices.length > 0 && samplePrices.every((v) => Number.isInteger(v) && Math.abs(v) > 10000);
-  if (hasScaledRates || hasScaledPrices) {
-    priceScale = 10000;
-    eurScale = 100;
-    fxScale = 10000;
-  }
-
   const importAll = db.transaction(() => {
     for (const row of rows) {
       const dateVal = row[col('date')];
@@ -179,7 +195,6 @@ async function processTransactionFile(buffer, filename) {
       const isin = row[col('isin')];
       if (!isin || config.IGNORED_STOCKS.has(isin)) continue;
 
-      // Get or create stock
       let stock = db.prepare('SELECT * FROM stocks WHERE isin = ?').get(isin);
 
       if (!stock) {
@@ -187,7 +202,6 @@ async function processTransactionFile(buffer, filename) {
         const nativeCurrency = determineNativeCurrency(rows, productName);
         let symbol = productName.split(/\s+/)[0]?.toUpperCase() || isin;
 
-        // Avoid unique constraint on symbol
         const existingSymbol = db.prepare('SELECT id FROM stocks WHERE symbol = ?').get(symbol);
         if (existingSymbol) symbol = isin;
 
@@ -200,11 +214,10 @@ async function processTransactionFile(buffer, filename) {
 
       stockIdsToFetch.add(stock.id);
 
-      // Parse date
       const transDate = parseDate(dateVal, String(row[col('time')] ?? ''));
       if (!transDate) continue;
 
-      const quantity = parseInt(row[col('quantity')]) || 0;
+      const quantity = parseInt(row[col('quantity')], 10) || 0;
       const price = (parseFloat(row[col('price')]) || 0) / priceScale;
       const exchangeRate = row[col('exchange_rate')];
       const feesEur = row[col('fees_eur')];
@@ -213,8 +226,6 @@ async function processTransactionFile(buffer, filename) {
       const parsedFeesEur = feesEur != null && !isNaN(parseFloat(feesEur)) ? parseFloat(feesEur) / eurScale : null;
       const transactionId = String(row[col('transaction_id')] ?? '');
 
-      // DEGIRO may split one order into multiple fills with identical
-      // timestamp/quantity/price. Only dedupe when the export provides an id.
       const existing = transactionId
         ? db.prepare('SELECT id FROM transactions WHERE stock_id = ? AND transaction_id = ?').get(stock.id, transactionId)
         : null;
@@ -235,13 +246,46 @@ async function processTransactionFile(buffer, filename) {
           transactionId
         );
         newTransactions++;
+      } else {
+        skippedDuplicates++;
       }
     }
   });
 
   importAll();
 
-  return { newTransactions, updatedStocks, stockIdsToFetch: [...stockIdsToFetch] };
+  return {
+    newTransactions,
+    updatedStocks,
+    skippedDuplicates,
+    stockIdsToFetch: [...stockIdsToFetch],
+  };
+}
+
+async function processConfirmationRows(rows) {
+  if (!rows.length) {
+    return { newTransactions: 0, updatedStocks: 0, skippedDuplicates: 0, stockIdsToFetch: [] };
+  }
+  return importCanonicalRows(rows, { priceScale: 1, eurScale: 1, fxScale: 1 });
+}
+
+function previewConfirmationRows(rows) {
+  const db = getDb();
+  return rows.map((row) => {
+    const transactionId = String(row[col('transaction_id')] ?? '');
+    const existing = transactionId
+      ? db.prepare('SELECT id FROM transactions WHERE transaction_id = ?').get(transactionId)
+      : null;
+    return { row, duplicate: Boolean(existing) };
+  });
+}
+
+async function processConfirmationEmail(buffer, filename) {
+  const rows = parseConfirmationEmail(buffer, filename);
+  if (!rows.length) {
+    throw new Error('No transactions found in this confirmation email');
+  }
+  return processConfirmationRows(rows);
 }
 
 /**
@@ -335,4 +379,4 @@ function processAccountFile(buffer) {
   return { newMovements, errors };
 }
 
-module.exports = { processTransactionFile, processAccountFile, parseDate };
+module.exports = { processTransactionFile, processAccountFile, processConfirmationEmail, processConfirmationRows, previewConfirmationRows, parseDate };

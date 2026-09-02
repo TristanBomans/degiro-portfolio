@@ -1523,6 +1523,14 @@ th.num {
   box-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%);
 }
 
+.dialog-settings {
+  width: min(34rem, 100%);
+}
+
+.dialog-scan {
+  width: min(40rem, 100%);
+}
+
 html.dark .dialog {
   border-color: rgb(255 255 255 / 8%);
   box-shadow: inset 0 1px rgb(255 255 255 / 4%), 0 24px 72px -20px rgb(0 0 0 / 90%);
@@ -1555,7 +1563,8 @@ html.dark .dialog {
 
 .form-group input[type="text"],
 .form-group input[type="number"],
-.form-group input[type="date"] {
+.form-group input[type="date"],
+.form-group input[type="password"] {
   height: 2rem;
   padding: 0 0.7rem;
   border: 1px solid var(--input);
@@ -1574,6 +1583,179 @@ html.dark .dialog {
   flex-direction: column;
   gap: 0.4rem;
   margin-bottom: 1rem;
+}
+
+.settings-block {
+  margin-bottom: 1rem;
+  padding: 0.85rem 0.9rem 0.95rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--card) 70%, transparent);
+}
+
+.settings-kicker {
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  margin-bottom: 0.35rem;
+}
+
+.settings-hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+}
+
+.settings-steps {
+  margin: 0 0 0.85rem;
+  padding-left: 1.15rem;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+
+.settings-steps li + li {
+  margin-top: 0.35rem;
+}
+
+.settings-steps code {
+  display: inline-block;
+  margin: 0.15rem 0.25rem 0 0;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.68rem;
+  word-break: break-all;
+  border-radius: 0.3rem;
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.settings-gmail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 5.5rem;
+  gap: 0.5rem;
+}
+
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-bottom: 0.7rem;
+}
+
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+}
+
+.mailbox-account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0 0 0.75rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
+  background: var(--popover);
+}
+
+.mailbox-email {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.mailbox-meta {
+  margin-top: 0.15rem;
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+}
+
+.scan-summary {
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+}
+
+.scan-fills {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: min(50dvh, 28rem);
+  overflow: auto;
+}
+
+.scan-fill {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.65rem;
+  align-items: start;
+  padding: 0.7rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
+  background: var(--popover);
+}
+
+.scan-fill.is-duplicate {
+  opacity: 0.62;
+}
+
+.scan-fill-copy {
+  min-width: 0;
+}
+
+.scan-fill-title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.scan-fill-meta {
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+}
+
+.scan-fill-amount {
+  font-size: 0.8125rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.scan-fill-flag {
+  display: inline-block;
+  margin-top: 0.25rem;
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.btn-tiny {
+  height: 1.5rem;
+  padding: 0 0.45rem;
+  font-size: 0.68rem;
+}
+
+#gmail-setup[hidden],
+#gmail-account[hidden] {
+  display: none;
 }
 
 .settings-list label {
