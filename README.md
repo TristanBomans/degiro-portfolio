@@ -2,7 +2,7 @@
 
 Portfolio tracker for DEGIRO history: live value, performance per position, and mailbox import of confirmation emails.
 
-Screenshots below use **mock data**.
+Screenshots below use **anonymised sample data** (same shape as a real portfolio, amounts scaled).
 
 ## Desktop
 
