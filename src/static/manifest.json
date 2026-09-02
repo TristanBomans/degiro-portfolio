@@ -1,0 +1,17 @@
+{
+  "name": "DEGIRO Portfolio",
+  "short_name": "Portfolio",
+  "description": "DEGIRO portfolio tracking and visualization",
+  "id": "/",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fafafa",
+  "theme_color": "#18181b",
+  "icons": [
+    {
+      "src": "/static/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

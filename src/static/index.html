@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Portfolio</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#18181b">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 16 16" fill="none">
+            <path d="M2 12.5L5.5 8.2 8.4 10.4 14 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div class="brand-copy">
+          <div class="brand-title">Portfolio</div>
+          <div class="brand-sub">DEGIRO history</div>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav" id="nav">
+        <div class="nav-label">Workspace</div>
+        <button class="nav-item active" data-view="overview" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+          Overview
+        </button>
+        <button class="nav-item" data-view="graph" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V5M4 19h16"/><path d="M7 14l4-5 3 3 5-7"/></svg>
+          Graph
+        </button>
+        <button class="nav-item" data-view="performance" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19h16"/><path d="M5 15l4-6 3 3 5-8"/><circle cx="17" cy="4" r="1.4" fill="currentColor" stroke="none"/></svg>
+          Performance
+        </button>
+        <button class="nav-item" data-view="history" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg>
+          History
+        </button>
+        <button class="nav-item" data-view="brokers" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><path d="M3 19c.6-3 2.7-5 5-5s4.4 2 5 5M13 19c.6-3 2.7-5 5-5"/></svg>
+          Other brokers
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button class="nav-item" id="settings-btn" type="button">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.63-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg>
+          Settings
+        </button>
+      </div>
+    </aside>
+    <button class="sidebar-backdrop" id="sidebar-backdrop" type="button" aria-label="Close navigation" hidden></button>
+
+    <div class="workspace">
+      <header class="topbar">
+        <button class="btn btn-ghost btn-icon menu-btn" id="menu-btn" type="button" aria-label="Open navigation">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        </button>
+        <div class="topbar-title">
+          <h1 id="view-title">Overview</h1>
+          <p id="view-subtitle">Live value, invested capital, and P/L</p>
+        </div>
+        <div class="topbar-actions">
+          <label class="broker-toggle" title="Include other-broker holdings">
+            <input type="checkbox" id="include-other-brokers">
+            <span>Other brokers</span>
+          </label>
+          <button class="btn btn-ghost btn-icon" id="live-refresh-btn" type="button" title="Refresh live prices" aria-label="Refresh live prices">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 6v3l4-4-4-4v3c-4.42 0-8 3.58-8 8 0 1.57.46 3.03 1.24 4.26L6.7 14.8c-.45-.83-.7-1.79-.7-2.8 0-3.31 2.69-6 6-6zm6.76 1.74L17.3 9.2c.44.84.7 1.79.7 2.8 0 3.31-2.69 6-6 6v-3l-4 4 4 4v-3c4.42 0 8-3.58 8-8 0-1.57-.46-3.03-1.24-4.26z"/></svg>
+          </button>
+          <button class="btn btn-ghost btn-icon" id="theme-toggle" type="button" title="Toggle theme" aria-label="Toggle theme">
+            <svg id="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <main class="main">
+        <div class="offline-banner" id="offline-banner">Server is not responding. Start it with <code>npm start</code>.</div>
+        <div class="loading-row" id="loading"><span class="ghost"></span><span id="loading-status">Loading workspace…</span></div>
+        <div id="error" class="muted-empty" style="display:none;"></div>
+
+        <section class="view active" id="view-overview">
+          <div class="empty-state" id="empty-state" style="display:none;">
+            <div class="empty-card">
+              <h2>Bring your DEGIRO history in.</h2>
+              <p>Upload a transactions export. The graph, snapshot, and holdings follow from there.</p>
+              <div class="empty-actions">
+                <button class="btn btn-primary" id="empty-upload-tx" type="button">Upload transactions</button>
+              </div>
+            </div>
+          </div>
+          <div id="overview-content" style="display:none;">
+            <div class="panel">
+              <div class="panel-header">
+                <div>
+                  <div class="panel-kicker">Summary</div>
+                  <h2>Portfolio</h2>
+                </div>
+              </div>
+              <div class="panel-body">
+                <div class="hero-strip" id="overview-hero"></div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-header">
+                <div>
+                  <div class="panel-kicker">Positions</div>
+                  <h2>Current holdings</h2>
+                </div>
+              </div>
+              <div class="panel-body" id="holdings-list"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-graph">
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-kicker">Time series</div>
+                <h2>Value over time</h2>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div id="tt-header-display"></div>
+              <div class="chart-controls">
+                <div class="seg" id="chart-range-selector"></div>
+                <button class="btn btn-outline" id="chart-scale-btn" type="button">From zero</button>
+              </div>
+              <div class="chart-shell">
+                <div class="chart-legend">
+                  <span class="legend-item"><i class="legend-swatch value"></i> Portfolio value</span>
+                  <span class="legend-item"><i class="legend-swatch invested"></i> Net invested</span>
+                  <span class="legend-item"><i class="legend-swatch open"></i> Open positions</span>
+                </div>
+                <div class="chart-canvas-wrap" id="chart-canvas-wrap">
+                  <canvas id="valuation-canvas"></canvas>
+                  <div class="chart-tooltip" id="chart-tooltip" hidden></div>
+                </div>
+              </div>
+              <div class="date-nav">
+                <button class="btn btn-outline" id="tt-prev" type="button">Prev</button>
+                <label class="date-field">
+                  <input type="date" id="tt-date">
+                </label>
+                <button class="btn btn-outline" id="tt-next" type="button">Next</button>
+              </div>
+              <div id="tt-content"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-performance">
+          <div class="perf-layout" id="perf-layout">
+            <div class="panel perf-holdings-panel">
+              <div class="panel-header">
+                <div>
+                  <div class="panel-kicker">Holdings</div>
+                  <h2>Trackers & purchases</h2>
+                </div>
+              </div>
+              <div class="panel-body" id="perf-holdings"></div>
+            </div>
+            <div class="panel panel-lot-detail">
+              <div class="panel-header">
+                <div>
+                  <div class="panel-kicker" id="lot-detail-kicker">Detail</div>
+                  <h2 id="lot-detail-title">Select a position</h2>
+                </div>
+                <button class="btn btn-outline" id="perf-expand-btn" type="button" hidden>Expand</button>
+              </div>
+              <div class="panel-body">
+                <div id="lot-detail-meta" class="lot-detail-meta">
+                  <div class="muted-empty">Click a position or a purchase to see how it has performed.</div>
+                </div>
+                <div id="lot-chart-block" hidden>
+                  <div class="chart-controls">
+                    <div class="seg" id="lot-range-selector"></div>
+                  </div>
+                  <div class="chart-legend" id="lot-chart-legend">
+                    <span class="legend-item"><i class="legend-swatch value"></i> Value</span>
+                    <span class="legend-item"><i class="legend-swatch invested"></i> Cost</span>
+                  </div>
+                  <div class="chart-canvas-wrap lot-chart-wrap" id="lot-chart-wrap">
+                    <canvas id="lot-canvas"></canvas>
+                    <div class="chart-tooltip" id="lot-tooltip" hidden></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-history">
+          <div class="panel panel-fill">
+            <div class="panel-header">
+              <div>
+                <div class="panel-kicker">Month close</div>
+                <h2>History</h2>
+              </div>
+            </div>
+            <div class="panel-body panel-body-fill" id="portfolio-history-table"></div>
+          </div>
+        </section>
+
+        <section class="view" id="view-brokers">
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-kicker">Manual</div>
+                <h2>Other brokers</h2>
+              </div>
+              <button class="btn btn-primary" id="add-holding-btn" type="button">Add holding</button>
+            </div>
+            <div class="panel-body" id="other-brokers-content"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <input type="file" id="file-input" accept=".xlsx,.xls" hidden>
+
+  <div class="toast" id="toast"></div>
+  <div class="progress-toast" id="progress-toast">
+    <div id="progress-message">Uploading…</div>
+    <div class="progress-bar"><span id="progress-fill"></span></div>
+  </div>
+
+  <div class="overlay" id="settings-overlay">
+    <div class="dialog" role="dialog" aria-labelledby="settings-title">
+      <h3 id="settings-title">Settings</h3>
+      <div class="settings-list">
+        <button class="btn btn-primary" id="upload-tx-btn" type="button">Upload transactions</button>
+        <button class="btn btn-outline" id="update-market-btn" type="button">Update market data</button>
+        <button class="btn btn-destructive" id="purge-btn" type="button">Purge all data</button>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn btn-outline" id="settings-close" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="manual-overlay"></div>
+  <div class="overlay" id="confirm-overlay"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
