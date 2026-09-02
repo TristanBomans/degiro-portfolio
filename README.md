@@ -1,8 +1,10 @@
 # DEGIRO Portfolio
 
+Fork of [RobbeVanHemelryck/degiro-portfolio-history](https://github.com/RobbeVanHemelryck/degiro-portfolio-history).
+
 Portfolio tracker for DEGIRO history: live value, performance per position, and mailbox import of confirmation emails.
 
-Screenshots below use **anonymised sample data** (same shape as a real portfolio, amounts scaled).
+Screenshots below use **sample data** (fictional holdings, amounts unrelated to any real portfolio).
 
 ## Desktop
 
