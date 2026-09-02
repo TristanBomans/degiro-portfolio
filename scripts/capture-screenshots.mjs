@@ -442,7 +442,7 @@ async function openScan(page) {
 
 async function shot(page, name) {
   const file = path.join(OUT, `${name}.png`);
-  await page.screenshot({ path: file, fullPage: true });
+  await page.screenshot({ path: file, fullPage: false });
   console.log(`wrote ${path.relative(ROOT, file)}`);
 }
 

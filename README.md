@@ -1,49 +1,40 @@
 # DEGIRO Portfolio
 
-Portfolio tracker with the original backend and a frontend whose design language follows [T3 Code](https://github.com/pingdotgg/t3code).
+Portfolio tracker for DEGIRO history: live value, performance per position, and mailbox import of confirmation emails.
 
 Screenshots below use **mock data**.
 
 ## Desktop
 
-<p>
-  <img src="docs/screenshots/desktop-overview.png" alt="Overview — mock portfolio summary and holdings" width="900">
-</p>
-<p>
-  <img src="docs/screenshots/desktop-graph.png" alt="Graph — portfolio value, invested capital, and open positions" width="900">
-</p>
-<p>
-  <img src="docs/screenshots/desktop-performance.png" alt="Performance — position chart with relevant ranges only" width="900">
-</p>
-<p>
-  <img src="docs/screenshots/desktop-history.png" alt="History — month-end value and gain or loss" width="900">
-</p>
-<p>
-  <img src="docs/screenshots/desktop-brokers.png" alt="Other brokers — manual holdings" width="900">
-</p>
+![Overview](docs/screenshots/desktop-overview.png)
+
+![Graph](docs/screenshots/desktop-graph.png)
+
+![Performance](docs/screenshots/desktop-performance.png)
+
+![History](docs/screenshots/desktop-history.png)
+
+![Other brokers](docs/screenshots/desktop-brokers.png)
 
 ## Mobile
 
-<p>
-  <img src="docs/screenshots/mobile-overview.png" alt="Mobile overview" width="320">
-  <img src="docs/screenshots/mobile-graph.png" alt="Mobile graph" width="320">
-  <img src="docs/screenshots/mobile-performance.png" alt="Mobile performance" width="320">
-</p>
-<p>
-  <img src="docs/screenshots/mobile-history.png" alt="Mobile history" width="320">
-  <img src="docs/screenshots/mobile-brokers.png" alt="Mobile other brokers" width="320">
-</p>
+<p><img src="docs/screenshots/mobile-overview.png" alt="Mobile overview" width="360"></p>
+
+<p><img src="docs/screenshots/mobile-graph.png" alt="Mobile graph" width="360"></p>
+
+<p><img src="docs/screenshots/mobile-performance.png" alt="Mobile performance" width="360"></p>
+
+<p><img src="docs/screenshots/mobile-history.png" alt="Mobile history" width="360"></p>
+
+<p><img src="docs/screenshots/mobile-brokers.png" alt="Mobile other brokers" width="360"></p>
 
 ## Mailbox import
 
 Scan DEGIRO **transactiebevestiging** emails over IMAP. New fills are previewed first; you choose what to add. Existing history is not replaced. Duplicates stay visible but cannot be selected.
 
-<p>
-  <img src="docs/screenshots/desktop-mailbox-scan.png" alt="Mailbox scan — choose detected fills" width="900">
-</p>
-<p>
-  <img src="docs/screenshots/mobile-mailbox-scan.png" alt="Mobile mailbox scan" width="320">
-</p>
+![Mailbox scan](docs/screenshots/desktop-mailbox-scan.png)
+
+<p><img src="docs/screenshots/mobile-mailbox-scan.png" alt="Mobile mailbox scan" width="360"></p>
 
 ## Run locally
 
@@ -56,14 +47,24 @@ Open [http://localhost:3000](http://localhost:3000). The SQLite database is stor
 
 ## Docker
 
+Build the image from this repository:
+
+```bash
+docker build -t degiro-portfolio .
+```
+
+Then run it:
+
 ```yaml
-degiro-portfolio-history:
-  image: tristanbomans/degiro-portfolio-history:0.5.13
+degiro-portfolio:
+  image: degiro-portfolio
   ports:
     - 8000:8000
   volumes:
     - <database-folder>:/config
 ```
+
+The app listens on port `8000` inside the container. Persist the SQLite database by mounting a folder at `/config`.
 
 ## Import data
 
