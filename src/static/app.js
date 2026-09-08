@@ -2017,9 +2017,12 @@
           const closed = h.kind === 'closed';
           const selected = state.selectedHoldingKey === h.key;
           const lots = [...(h.lots || [])].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+          const livePrice = !closed && h.latest_price != null
+            ? `<span class="perf-live-price">live price ${formatPrice(h.latest_price, h.currency)}</span>`
+            : '';
           const meta = closed
             ? `Sold · ${h.lots.length} purchase${h.lots.length === 1 ? '' : 's'} · realized`
-            : `${formatShares(h.shares)} shares · cost ${formatEur(h.cost_eur || 0)} · now ${h.value_eur != null ? formatEur(h.value_eur) : '—'}`;
+            : `${formatShares(h.shares)} shares · cost ${formatEur(h.cost_eur || 0)} · now ${h.value_eur != null ? formatEur(h.value_eur) : '—'}${livePrice ? ` · ${livePrice}` : ''}`;
           return `
             <div class="perf-holding${selected ? ' selected' : ''}" id="perf-${h.key}">
               <div class="perf-holding-row">

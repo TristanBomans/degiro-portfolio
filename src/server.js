@@ -434,8 +434,29 @@ function downsampleSeries(dates, values, extra = null, maxPoints = 900) {
   return result;
 }
 
+// Historical prices use one YYYY-MM-DD row per day, while live refreshes add
+// timestamped snapshots. Keep the latest snapshot for each calendar day so a
+// chart never receives multiple points with the same x-coordinate.
+function latestPricesByDay(prices) {
+  const latestByDay = new Map();
+  for (const price of prices || []) {
+    const rawDate = String(price.date || '');
+    const day = rawDate.slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || price.close == null) continue;
+    const current = latestByDay.get(day);
+    if (!current || rawDate >= current.rawDate) {
+      latestByDay.set(day, { rawDate, price });
+    }
+  }
+
+  return [...latestByDay.values()]
+    .sort((a, b) => a.price.date.localeCompare(b.price.date))
+    .map(({ price }) => ({ ...price, date: String(price.date).slice(0, 10) }));
+}
+
 function buildPositionChartSeries(prices, transactions, rateFor) {
   const trans = sortTransactions(transactions);
+  const dailyPrices = latestPricesByDay(prices);
   let ti = 0;
   const lots = [];
   let started = false;
@@ -478,7 +499,7 @@ function buildPositionChartSeries(prices, transactions, rateFor) {
     return { qty, cost };
   };
 
-  for (const p of prices) {
+  for (const p of dailyPrices) {
     const day = (p.date || '').split('T')[0];
     while (ti < trans.length && ((trans[ti].date || '').split('T')[0] <= day)) {
       applyTx(trans[ti]);
@@ -2011,7 +2032,7 @@ app.get('/api/stock/:stockId/lot-chart', (req, res) => {
   const { globalRates, historicalRates } = loadExchangeRates(db);
   const dates = [];
   const values = [];
-  for (const p of prices) {
+  for (const p of latestPricesByDay(prices)) {
     const day = (p.date || '').split('T')[0];
     const rate = getRateOnDate(p.currency || stock.currency || 'EUR', day, globalRates, historicalRates);
     dates.push(day);
@@ -2041,7 +2062,7 @@ app.get('/api/manual-holdings/:id/lot-chart', (req, res) => {
   const { globalRates, historicalRates } = loadExchangeRates(db);
   const dates = [];
   const values = [];
-  for (const p of prices) {
+  for (const p of latestPricesByDay(prices)) {
     const day = (p.date || '').split('T')[0];
     const rate = getRateOnDate(p.currency || holding.currency || 'EUR', day, globalRates, historicalRates);
     dates.push(day);
