@@ -24,10 +24,14 @@
     ttSectionStates: { 'tt-stocks': false, 'tt-trackers': false, 'tt-other-brokers': false },
     performanceHoldings: [],
     perfCollapsed: {},
+    perfGroupCollapsed: { closed: true },
     selectedLotId: null,
     selectedHoldingKey: null,
     selectedPerfRange: 'MAX',
     perfDetailExpanded: false,
+    perfOverlayOpen: false,
+    perfOverlayHistoryEntry: false,
+    perfOverlayTrigger: null,
     lotChartData: null,
     serverConfig: null,
     latestPortfolioSummary: null,
@@ -2009,10 +2013,15 @@
       { id: 'closed', title: 'Sold positions', items: holdings.filter((h) => h.kind === 'closed').sort((a, b) => (a.first_purchase_date || '').localeCompare(b.first_purchase_date || '')) },
     ].filter((g) => g.items.length);
 
-    container.innerHTML = groups.map((group) => `
-      <div class="perf-group">
-        <div class="perf-group-title">${group.title}</div>
-        ${group.items.map((h) => {
+    container.innerHTML = groups.map((group) => {
+      const groupCollapsed = group.id === 'closed' && state.perfGroupCollapsed.closed !== false;
+      const groupTitle = group.id === 'closed'
+        ? `<button class="perf-group-title perf-group-toggle${groupCollapsed ? ' collapsed' : ''}" type="button" data-perf-group-toggle="closed" aria-expanded="${groupCollapsed ? 'false' : 'true'}">
+            <span>${group.title}</span>
+            <span class="perf-group-toggle-meta"><span class="perf-group-count">${group.items.length}</span><span class="perf-group-toggle-icon" aria-hidden="true">▾</span></span>
+          </button>`
+        : `<div class="perf-group-title">${group.title}</div>`;
+      const groupItems = groupCollapsed ? '' : group.items.map((h) => {
           const collapsed = state.perfCollapsed[h.key] !== false;
           const closed = h.kind === 'closed';
           const selected = state.selectedHoldingKey === h.key;
@@ -2056,9 +2065,9 @@
               `}
             </div>
           `;
-        }).join('')}
-      </div>
-    `).join('');
+        }).join('');
+      return `<div class="perf-group">${groupTitle}${groupItems}</div>`;
+    }).join('');
 
     if (state.selectedLotId) {
       const selected = findLot(state.selectedLotId);
@@ -2127,6 +2136,10 @@
   }
 
   function revealPerfDetail() {
+    if (state.perfOverlayOpen) {
+      requestAnimationFrame(() => lotChart.draw());
+      return;
+    }
     if (!isCompactView()) return;
     setPerfExpanded(true);
     requestAnimationFrame(() => {
@@ -2164,21 +2177,74 @@
     await loadPositionChart(holding);
   }
 
+  function syncPerfDetailAction() {
+    const btn = $('perf-expand-btn');
+    if (state.perfOverlayOpen) {
+      btn.hidden = false;
+      btn.classList.add('is-back');
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg> Close';
+      btn.setAttribute('aria-label', 'Close performance detail');
+      return;
+    }
+    btn.classList.toggle('is-back', state.perfDetailExpanded);
+    btn.innerHTML = state.perfDetailExpanded
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg> Holdings'
+      : 'Expand';
+    btn.setAttribute('aria-label', state.perfDetailExpanded ? 'Back to holdings' : 'Expand chart');
+  }
+
   function setPerfExpanded(expanded) {
     state.perfDetailExpanded = expanded;
     $('perf-layout').classList.toggle('is-expanded', expanded);
-    const btn = $('perf-expand-btn');
-    btn.classList.toggle('is-back', expanded);
-    btn.innerHTML = expanded
-      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg> Holdings'
-      : 'Expand';
-    btn.setAttribute('aria-label', expanded ? 'Back to holdings' : 'Expand chart');
+    syncPerfDetailAction();
     requestAnimationFrame(() => lotChart.draw());
   }
 
-  function openHoldingPerformance(key) {
-    setView('performance');
-    selectPosition(key, { scroll: true });
+  function closePerformanceOverlay({ fromHistory = false } = {}) {
+    if (!state.perfOverlayOpen) return;
+    const shouldPopHistory = state.perfOverlayHistoryEntry && !fromHistory;
+    const trigger = state.perfOverlayTrigger;
+    const detailPanel = document.querySelector('.panel-lot-detail');
+
+    state.perfOverlayOpen = false;
+    state.perfOverlayHistoryEntry = false;
+    state.perfOverlayTrigger = null;
+    $('performance-overlay').classList.remove('show');
+    $('performance-overlay').setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('performance-overlay-open');
+    document.querySelector('.app').inert = false;
+    $('perf-layout').appendChild(detailPanel);
+    setPerfExpanded(false);
+
+    if (shouldPopHistory) history.back();
+    requestAnimationFrame(() => trigger?.focus?.({ preventScroll: true }));
+  }
+
+  async function openHoldingPerformance(key, trigger = null) {
+    let holding = state.performanceHoldings.find((item) => item.key === key);
+    if (!holding) {
+      await loadPerformance();
+      holding = state.performanceHoldings.find((item) => item.key === key);
+    }
+    if (!holding) return;
+
+    state.perfOverlayTrigger = trigger || document.activeElement;
+    state.perfOverlayOpen = true;
+    $('performance-overlay-sheet').appendChild(document.querySelector('.panel-lot-detail'));
+    $('performance-overlay').classList.add('show');
+    $('performance-overlay').setAttribute('aria-hidden', 'false');
+    document.body.classList.add('performance-overlay-open');
+    document.querySelector('.app').inert = true;
+    const historyState = history.state && typeof history.state === 'object' ? history.state : {};
+    history.pushState({ ...historyState, performanceOverlay: true }, '');
+    state.perfOverlayHistoryEntry = true;
+    syncPerfDetailAction();
+
+    await selectPosition(key);
+    requestAnimationFrame(() => {
+      $('performance-overlay-sheet').focus({ preventScroll: true });
+      lotChart.draw();
+    });
   }
 
   async function loadPerformance() {
@@ -2268,8 +2334,21 @@
       lotChart.hoverIndex = null;
       lotChart.draw();
     });
-    $('perf-expand-btn').addEventListener('click', () => setPerfExpanded(!state.perfDetailExpanded));
+    $('perf-expand-btn').addEventListener('click', () => {
+      if (state.perfOverlayOpen) closePerformanceOverlay();
+      else setPerfExpanded(!state.perfDetailExpanded);
+    });
+    $('performance-overlay').addEventListener('click', (e) => {
+      if (e.target === $('performance-overlay')) closePerformanceOverlay();
+    });
+    window.addEventListener('popstate', () => {
+      if (state.perfOverlayOpen) closePerformanceOverlay({ fromHistory: true });
+    });
     window.matchMedia('(max-width: 860px)').addEventListener('change', (e) => {
+      if (state.perfOverlayOpen) {
+        requestAnimationFrame(() => lotChart.draw());
+        return;
+      }
       if (e.matches && (state.selectedHoldingKey || state.selectedLotId)) {
         setPerfExpanded(true);
       } else if (!e.matches) {
@@ -2287,7 +2366,7 @@
     $('tt-content').addEventListener('click', (e) => {
       const holding = e.target.closest('[data-perf-key]');
       if (holding) {
-        openHoldingPerformance(holding.dataset.perfKey);
+        openHoldingPerformance(holding.dataset.perfKey, holding);
         return;
       }
       const header = e.target.closest('.tt-section-header');
@@ -2330,9 +2409,16 @@
     $('holdings-list').addEventListener('click', (e) => {
       const row = e.target.closest('[data-perf-key]');
       if (!row) return;
-      openHoldingPerformance(row.dataset.perfKey);
+      openHoldingPerformance(row.dataset.perfKey, row);
     });
     $('perf-holdings').addEventListener('click', (e) => {
+      const groupToggle = e.target.closest('[data-perf-group-toggle]');
+      if (groupToggle) {
+        const group = groupToggle.dataset.perfGroupToggle;
+        state.perfGroupCollapsed[group] = state.perfGroupCollapsed[group] !== true;
+        renderPerformance();
+        return;
+      }
       const lotBtn = e.target.closest('[data-lot-id]');
       if (lotBtn) {
         selectLot(lotBtn.dataset.lotId);
@@ -2350,6 +2436,10 @@
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
+        if (state.perfOverlayOpen) {
+          closePerformanceOverlay();
+          return;
+        }
         if ($('sidebar').classList.contains('open')) {
           setSidebarOpen(false);
           return;

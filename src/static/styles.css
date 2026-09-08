@@ -1170,6 +1170,64 @@ th.num {
   align-items: start;
 }
 
+body.performance-overlay-open {
+  overflow: hidden;
+}
+
+.performance-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: clamp(1rem, 4vw, 3rem);
+  background: color-mix(in srgb, var(--background) 58%, transparent);
+  -webkit-backdrop-filter: blur(10px) saturate(115%);
+  backdrop-filter: blur(10px) saturate(115%);
+}
+
+.performance-overlay.show {
+  display: block;
+}
+
+.performance-sheet {
+  width: min(60rem, 100%);
+  min-height: calc(100dvh - clamp(2rem, 8vw, 6rem));
+  margin: 0 auto;
+  outline: none;
+  animation: performance-sheet-in 180ms ease-out;
+}
+
+.performance-overlay .panel-lot-detail {
+  position: relative;
+  top: auto;
+  min-height: inherit;
+  margin: 0;
+  box-shadow: 0 30px 80px -32px rgb(0 0 0 / 65%);
+}
+
+.performance-overlay .lot-chart-wrap {
+  height: min(46dvh, 430px);
+}
+
+@keyframes performance-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .performance-sheet {
+    animation: none;
+  }
+}
+
 .perf-layout.is-expanded {
   grid-template-columns: 1fr;
 }
@@ -1206,6 +1264,51 @@ th.num {
   text-transform: uppercase;
   color: var(--muted-foreground);
   margin-bottom: 0.55rem;
+}
+
+.perf-group-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.perf-group-toggle:hover {
+  color: var(--foreground);
+}
+
+.perf-group-toggle-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.perf-group-count {
+  min-width: 1.35rem;
+  padding: 0.12rem 0.38rem;
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 0.625rem;
+  line-height: 1.2;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.perf-group-toggle-icon {
+  display: inline-block;
+  font-size: 0.75rem;
+  transition: transform 150ms ease;
+}
+
+.perf-group-toggle.collapsed .perf-group-toggle-icon {
+  transform: rotate(-90deg);
 }
 
 .perf-holding {
@@ -2162,6 +2265,42 @@ html.dark .dialog {
   .perf-layout {
     grid-template-columns: 1fr;
     gap: 0;
+  }
+
+  .performance-overlay {
+    padding: 0;
+    background: var(--background);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .performance-sheet {
+    width: 100%;
+    min-height: 100dvh;
+  }
+
+  .performance-overlay .panel-lot-detail {
+    min-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .performance-overlay .panel-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: color-mix(in srgb, var(--background) 88%, transparent);
+    -webkit-backdrop-filter: blur(14px) saturate(120%);
+    backdrop-filter: blur(14px) saturate(120%);
+  }
+
+  .performance-overlay .panel-body {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+
+  .performance-overlay .lot-chart-wrap {
+    height: 300px;
   }
 
   .perf-layout:not(.is-expanded) .panel-lot-detail {
