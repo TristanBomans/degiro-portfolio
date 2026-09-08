@@ -1,6 +1,6 @@
 {
   "name": "degiro-portfolio",
-  "version": "0.5.14",
+  "version": "0.5.15",
   "description": "DEGIRO portfolio tracking with a T3 Code design-language frontend",
   "main": "src/server.js",
   "scripts": {

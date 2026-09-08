@@ -1279,13 +1279,6 @@ th.num {
   margin-top: 0.12rem;
 }
 
-.perf-live-price {
-  color: var(--foreground);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
 .perf-holding-right {
   text-align: right;
   font-variant-numeric: tabular-nums;

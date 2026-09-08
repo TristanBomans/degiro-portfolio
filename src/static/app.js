@@ -2018,7 +2018,7 @@
           const selected = state.selectedHoldingKey === h.key;
           const lots = [...(h.lots || [])].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
           const livePrice = !closed && h.latest_price != null
-            ? `<span class="perf-live-price">live price ${formatPrice(h.latest_price, h.currency)}</span>`
+            ? `live ${formatPrice(h.latest_price, h.currency)}`
             : '';
           const meta = closed
             ? `Sold · ${h.lots.length} purchase${h.lots.length === 1 ? '' : 's'} · realized`
