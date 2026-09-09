@@ -279,7 +279,11 @@ function splitLotsFromTransactions(transactions) {
     const qty = Number(t.quantity) || 0;
     const day = (t.date || '').split('T')[0];
     if (qty > 0) {
-      const cost = Math.abs(Number(t.total_eur) || 0);
+      const transactionValue = Math.abs(Number(t.value_eur) || 0);
+      const statedCosts = Math.abs(Number(t.fees_eur) || 0);
+      const cost = Math.abs(Number(t.total_eur) || 0) || transactionValue + statedCosts;
+      const purchaseValue = transactionValue || Math.max(0, cost - statedCosts);
+      const costs = Math.max(0, cost - purchaseValue);
       lots.push({
         transaction_id: t.id,
         date: day,
@@ -289,6 +293,10 @@ function splitLotsFromTransactions(transactions) {
         currency: t.currency,
         remaining_cost_eur: cost,
         original_cost_eur: cost,
+        remaining_purchase_value_eur: purchaseValue,
+        original_purchase_value_eur: purchaseValue,
+        remaining_costs_eur: costs,
+        original_costs_eur: costs,
         sold_qty: 0,
         proceeds_eur: 0,
         sell_date: null,
@@ -302,9 +310,13 @@ function splitLotsFromTransactions(transactions) {
         if (lot.remaining_qty <= 0) continue;
         const take = Math.min(lot.remaining_qty, left);
         const takeCost = lot.remaining_qty > 0 ? lot.remaining_cost_eur * (take / lot.remaining_qty) : 0;
+        const takePurchaseValue = lot.remaining_qty > 0 ? lot.remaining_purchase_value_eur * (take / lot.remaining_qty) : 0;
+        const takeCosts = lot.remaining_qty > 0 ? lot.remaining_costs_eur * (take / lot.remaining_qty) : 0;
         const takeProceeds = sellQty > 0 ? sellProceeds * (take / sellQty) : 0;
         lot.remaining_qty -= take;
         lot.remaining_cost_eur -= takeCost;
+        lot.remaining_purchase_value_eur -= takePurchaseValue;
+        lot.remaining_costs_eur -= takeCosts;
         lot.sold_qty += take;
         lot.proceeds_eur += takeProceeds;
         lot.sell_date = day;
@@ -323,6 +335,8 @@ function splitLotsFromTransactions(transactions) {
       buy_price: lot.buy_price,
       currency: lot.currency,
       cost_eur: round2(lot.remaining_cost_eur) || 0,
+      purchase_value_eur: round2(lot.remaining_purchase_value_eur) || 0,
+      costs_eur: round2(lot.remaining_costs_eur) || 0,
     }));
 
   const realized = lots
@@ -341,6 +355,8 @@ function splitLotsFromTransactions(transactions) {
         buy_price: lot.buy_price,
         currency: lot.currency,
         cost_eur: cost,
+        purchase_value_eur: round2(lot.original_purchase_value_eur) || 0,
+        costs_eur: round2(lot.original_costs_eur) || 0,
         value_eur: proceeds,
         gain_eur: gain,
         gain_pct: gainPct,
@@ -364,6 +380,11 @@ function decorateLots(lots, { holdingKeyPrefix, price, rate }) {
         buy_price: lot.buy_price,
         currency: lot.currency,
         cost_eur: lot.cost_eur,
+        purchase_value_eur: lot.purchase_value_eur,
+        costs_eur: lot.costs_eur,
+        break_even_price: null,
+        price_move_eur: null,
+        fx_impact_eur: null,
         value_eur: lot.value_eur,
         gain_eur: lot.gain_eur,
         gain_pct: lot.gain_pct,
@@ -371,6 +392,23 @@ function decorateLots(lots, { holdingKeyPrefix, price, rate }) {
       };
     }
     const value = price != null ? lot.remaining_qty * price * rate : null;
+    const purchaseValue = Number(lot.purchase_value_eur) || 0;
+    const costs = Number(lot.costs_eur) || 0;
+    const purchaseRate = lot.remaining_qty > 0 && lot.buy_price > 0 && purchaseValue > 0
+      ? purchaseValue / (lot.remaining_qty * lot.buy_price)
+      : null;
+    const priceMove = price != null && purchaseRate != null
+      ? lot.remaining_qty * (price - lot.buy_price) * purchaseRate
+      : null;
+    const valueAtPurchaseRate = price != null && purchaseRate != null
+      ? lot.remaining_qty * price * purchaseRate
+      : null;
+    const fxImpact = lot.currency && lot.currency !== 'EUR' && value != null && valueAtPurchaseRate != null
+      ? value - valueAtPurchaseRate
+      : null;
+    const breakEvenPrice = lot.remaining_qty > 0 && rate > 0
+      ? lot.cost_eur / (lot.remaining_qty * rate)
+      : null;
     const gain = value != null ? value - lot.cost_eur : null;
     const gainPct = lot.cost_eur > 0 && gain != null ? (gain / lot.cost_eur) * 100 : null;
     return {
@@ -383,6 +421,11 @@ function decorateLots(lots, { holdingKeyPrefix, price, rate }) {
       buy_price: lot.buy_price,
       currency: lot.currency,
       cost_eur: round2(lot.cost_eur),
+      purchase_value_eur: round2(purchaseValue),
+      costs_eur: round2(costs),
+      break_even_price: round2(breakEvenPrice),
+      price_move_eur: round2(priceMove),
+      fx_impact_eur: round2(fxImpact),
       value_eur: round2(value),
       gain_eur: round2(gain),
       gain_pct: round2(gainPct),
@@ -1976,6 +2019,8 @@ app.get('/api/performance', (req, res) => {
         buy_price: manual.shares ? (manual.cost_basis_eur || 0) / manual.shares : null,
         currency: 'EUR',
         cost_eur: manual.cost_basis_eur || 0,
+        purchase_value_eur: manual.cost_basis_eur || 0,
+        costs_eur: 0,
       }];
       const lots = decorateLots(rawLots, {
         holdingKeyPrefix: `m-${manual.id}`,

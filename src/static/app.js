@@ -99,6 +99,11 @@
     return n.toLocaleString('en-US', { maximumFractionDigits: 4 });
   }
 
+  function formatShareCount(n) {
+    const quantity = Number(n);
+    return `${formatShares(n)} ${Math.abs(quantity - 1) < 1e-8 ? 'share' : 'shares'}`;
+  }
+
   function formatDay(date) {
     if (!date) return '—';
     return new Date(`${date}T00:00:00`).toLocaleDateString('en-US', {
@@ -1956,9 +1961,44 @@
     title.textContent = holding.name;
     showLotChartBlock();
     const remainingNote = lot.remaining_qty !== lot.original_qty
-      ? `${formatShares(lot.remaining_qty)} of ${formatShares(lot.original_qty)} shares remaining`
-      : `${formatShares(lot.remaining_qty)} shares`;
+      ? `${formatShares(lot.remaining_qty)} of ${formatShareCount(lot.original_qty)} remaining`
+      : formatShareCount(lot.remaining_qty);
     const closed = holding.kind === 'closed' || lot.realized;
+    const quantity = Number(lot.remaining_qty) || 0;
+    const purchaseValue = lot.purchase_value_eur != null
+      ? Number(lot.purchase_value_eur)
+      : (lot.currency === 'EUR' && lot.buy_price != null ? quantity * Number(lot.buy_price) : null);
+    const costs = lot.costs_eur != null
+      ? Number(lot.costs_eur)
+      : (purchaseValue != null ? Math.max(0, Number(lot.cost_eur || 0) - purchaseValue) : null);
+    const breakEvenPrice = lot.break_even_price != null
+      ? Number(lot.break_even_price)
+      : (!closed && lot.currency === 'EUR' && quantity > 0 ? Number(lot.cost_eur || 0) / quantity : null);
+    const priceMove = lot.price_move_eur != null
+      ? Number(lot.price_move_eur)
+      : (!closed && lot.currency === 'EUR' && holding.latest_price != null && lot.buy_price != null
+        ? quantity * (Number(holding.latest_price) - Number(lot.buy_price))
+        : null);
+    const fxImpact = lot.fx_impact_eur != null ? Number(lot.fx_impact_eur) : null;
+    const costBreakdown = `
+      <div class="lot-cost-card">
+        <div class="lot-cost-title">Cost breakdown</div>
+        <div class="lot-cost-grid">
+          <div class="lot-cost-item"><span>Buy / share</span><strong>${lot.buy_price != null ? formatPrice(lot.buy_price, lot.currency) : '—'}</strong></div>
+          ${closed
+            ? `<div class="lot-cost-item"><span>Purchase value</span><strong>${purchaseValue != null ? formatEur(purchaseValue) : '—'}</strong></div>`
+            : `<div class="lot-cost-item"><span>Live / share</span><strong>${holding.latest_price != null ? formatPrice(holding.latest_price, holding.currency) : '—'}</strong></div>`}
+          <div class="lot-cost-item"><span>Costs</span><strong>${costs != null ? formatEur(costs) : '—'}</strong></div>
+          ${closed ? '' : `<div class="lot-cost-item"><span>Break-even / share</span><strong>${breakEvenPrice != null ? formatPrice(breakEvenPrice, lot.currency) : '—'}</strong></div>`}
+        </div>
+        ${!closed && priceMove != null ? `
+          <div class="lot-cost-equation">
+            <span>Price move <strong class="${numberClass(priceMove)}">${formatSignedEur(priceMove)}</strong></span>
+            ${fxImpact != null && Math.abs(fxImpact) >= 0.005 ? `<span>FX <strong class="${numberClass(fxImpact)}">${formatSignedEur(fxImpact)}</strong></span>` : ''}
+            <span>Costs <strong class="negative">-${formatEur(costs || 0)}</strong></span>
+            <span class="lot-cost-net">Net <strong class="${numberClass(lot.gain_eur)}">${lot.gain_eur != null ? formatSignedEur(lot.gain_eur) : '—'}</strong></span>
+          </div>` : ''}
+      </div>`;
     const closedNote = closed
       ? '<div class="lot-closed-note">Realized P/L from this purchase through the sell.</div>'
       : '';
@@ -1977,11 +2017,11 @@
           <div class="lot-stat-value">${remainingNote}</div>
         </div>` : ''}
         <div class="lot-stat">
-          <div class="lot-stat-label">Cost</div>
+          <div class="lot-stat-label">Total cost</div>
           <div class="lot-stat-value">${formatEur(lot.cost_eur || 0)}</div>
         </div>
         <div class="lot-stat">
-          <div class="lot-stat-label">${closed ? 'Sold for' : 'Now'}</div>
+          <div class="lot-stat-label">${closed ? 'Sold for' : 'Current value'}</div>
           <div class="lot-stat-value">${lot.value_eur != null ? formatEur(lot.value_eur) : '—'}</div>
         </div>
         <div class="lot-stat">
@@ -1993,6 +2033,7 @@
           <div class="lot-stat-value ${numberClass(lot.gain_pct)}">${lot.gain_pct != null ? formatPct(lot.gain_pct) : '—'}</div>
         </div>
       </div>
+      ${costBreakdown}
       ${closedNote}
     `;
   }
@@ -2031,7 +2072,7 @@
             : '';
           const meta = closed
             ? `Sold · ${h.lots.length} purchase${h.lots.length === 1 ? '' : 's'} · realized`
-            : `${formatShares(h.shares)} shares · cost ${formatEur(h.cost_eur || 0)} · now ${h.value_eur != null ? formatEur(h.value_eur) : '—'}${livePrice ? ` · ${livePrice}` : ''}`;
+            : `${formatShareCount(h.shares)} · cost ${formatEur(h.cost_eur || 0)} · now ${h.value_eur != null ? formatEur(h.value_eur) : '—'}${livePrice ? ` · ${livePrice}` : ''}`;
           return `
             <div class="perf-holding${selected ? ' selected' : ''}" id="perf-${h.key}">
               <div class="perf-holding-row">
@@ -2049,18 +2090,33 @@
               </div>
               ${collapsed ? '' : `
                 <div class="perf-lots">
-                  ${lots.map((lot) => `
+                  ${lots.map((lot) => {
+                    const quantity = Number(lot.remaining_qty) || 0;
+                    const purchaseValue = lot.purchase_value_eur != null
+                      ? Number(lot.purchase_value_eur)
+                      : (lot.currency === 'EUR' && lot.buy_price != null ? quantity * Number(lot.buy_price) : null);
+                    const costs = lot.costs_eur != null
+                      ? Number(lot.costs_eur)
+                      : (purchaseValue != null ? Math.max(0, Number(lot.cost_eur || 0) - purchaseValue) : null);
+                    const breakEvenPrice = lot.break_even_price != null
+                      ? Number(lot.break_even_price)
+                      : (!closed && lot.currency === 'EUR' && quantity > 0 ? Number(lot.cost_eur || 0) / quantity : null);
+                    const costsMeta = costs != null && costs > 0.004 ? ` · costs ${formatEur(costs)}` : '';
+                    const breakEvenMeta = !closed && breakEvenPrice != null ? ` · break-even ${formatPrice(breakEvenPrice, lot.currency)}` : '';
+                    const soldMeta = lot.sell_date ? ` · sold ${formatDay(lot.sell_date)} · total cost ${formatEur(lot.cost_eur || 0)}` : '';
+                    return `
                     <button class="perf-lot${state.selectedLotId === lot.id ? ' selected' : ''}" type="button" data-lot-id="${escapeHtml(lot.id)}">
                       <div>
                         <div class="perf-lot-date">${formatDay(lot.date)}</div>
-                        <div class="perf-lot-meta">${formatShares(lot.remaining_qty)} shares${lot.buy_price != null ? ` @ ${formatPrice(lot.buy_price, lot.currency)}` : ''}${lot.sell_date ? ` · sold ${formatDay(lot.sell_date)}` : ''} · ${formatEur(lot.cost_eur || 0)}</div>
+                        <div class="perf-lot-meta">${formatShareCount(lot.remaining_qty)}${lot.buy_price != null ? ` @ ${formatPrice(lot.buy_price, lot.currency)}` : ''}${costsMeta}${breakEvenMeta}${soldMeta}</div>
                       </div>
                       <div class="perf-lot-right">
                         <div class="perf-lot-pct ${numberClass(lot.gain_pct)}">${lot.gain_pct != null ? formatPct(lot.gain_pct) : '—'}</div>
                         <div class="perf-lot-gain ${numberClass(lot.gain_eur)}">${lot.gain_eur != null ? formatSignedEur(lot.gain_eur) : '—'}</div>
                       </div>
                     </button>
-                  `).join('')}
+                  `;
+                  }).join('')}
                 </div>
               `}
             </div>
