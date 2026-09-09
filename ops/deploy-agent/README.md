@@ -18,9 +18,9 @@ the request body.
 ```
 
 The caller signs `<unix timestamp>.<raw JSON body>` with HMAC-SHA256. The
-signature, timestamp, unique delivery ID, registry username, and short-lived
-registry token are sent through the `X-Deploy-*` and `X-Registry-*` headers used
-in the GitHub Actions workflow.
+signature, timestamp, and unique delivery ID are sent through the `X-Deploy-*`
+headers. `X-Registry-Auth` contains a base64-encoded Docker auth object with the
+registry username and short-lived workflow token.
 
 Projects are defined in `targets.json`. Each target pins the repository, image
 prefix, registry username, and exact Portainer stack IDs/names. The deployed

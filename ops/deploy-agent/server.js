@@ -116,6 +116,20 @@ async function deploy(payload, registryUsername, registryToken) {
   }
 }
 
+function registryCredentials(encoded) {
+  if (!encoded || encoded.length > 8192) throw new Error('Registry credentials are missing or invalid');
+  let credentials;
+  try {
+    credentials = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
+  } catch (_error) {
+    throw new Error('Registry credentials are missing or invalid');
+  }
+  if (typeof credentials.username !== 'string' || typeof credentials.password !== 'string') {
+    throw new Error('Registry credentials are missing or invalid');
+  }
+  return credentials;
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') return json(res, 200, { status: 'ok' });
   if (req.method !== 'POST' || req.url !== '/deploy') return json(res, 404, { error: 'Not found' });
@@ -129,7 +143,8 @@ const server = http.createServer(async (req, res) => {
     recentDeliveries.set(delivery, Date.now());
     for (const [id, seenAt] of recentDeliveries) if (Date.now() - seenAt > 600000) recentDeliveries.delete(id);
     const payload = JSON.parse(rawBody);
-    const result = await deploy(payload, req.headers['x-registry-username'], req.headers['x-registry-token']);
+    const credentials = registryCredentials(req.headers['x-registry-auth']);
+    const result = await deploy(payload, credentials.username, credentials.password);
     console.log(JSON.stringify({ level: 'info', event: 'deployed', ...result }));
     return json(res, 200, { success: true, ...result });
   } catch (error) {
