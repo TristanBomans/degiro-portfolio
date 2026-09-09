@@ -2380,6 +2380,39 @@ html.dark .dialog {
     font-size: 0.8125rem;
   }
 
+  .perf-lot {
+    grid-template-areas:
+      "date result"
+      "meta meta";
+    row-gap: 0.18rem;
+  }
+
+  .perf-lot-main {
+    display: contents;
+  }
+
+  .perf-lot-date {
+    grid-area: date;
+  }
+
+  .perf-lot-meta {
+    grid-area: meta;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .perf-lot-right {
+    grid-area: result;
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
+  .perf-lot-gain {
+    margin-top: 0;
+  }
+
   .lot-detail-stats {
     gap: 0.4rem;
   }

@@ -61,6 +61,12 @@
     return `${prefix}${formatEur(value)}`;
   }
 
+  function formatCompactEur(value) {
+    const amount = Math.round(Math.abs(Number(value) || 0) * 100) / 100;
+    const minimumFractionDigits = Number.isInteger(amount) ? 0 : 2;
+    return `€${amount.toLocaleString('en-US', { minimumFractionDigits, maximumFractionDigits: 2 })}`;
+  }
+
   function formatPct(value) {
     const prefix = value > 0 ? '+' : value < 0 ? '-' : '';
     return `${prefix}${Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
@@ -2098,17 +2104,14 @@
                     const costs = lot.costs_eur != null
                       ? Number(lot.costs_eur)
                       : (purchaseValue != null ? Math.max(0, Number(lot.cost_eur || 0) - purchaseValue) : null);
-                    const breakEvenPrice = lot.break_even_price != null
-                      ? Number(lot.break_even_price)
-                      : (!closed && lot.currency === 'EUR' && quantity > 0 ? Number(lot.cost_eur || 0) / quantity : null);
-                    const costsMeta = costs != null && costs > 0.004 ? ` · costs ${formatEur(costs)}` : '';
-                    const breakEvenMeta = !closed && breakEvenPrice != null ? ` · break-even ${formatPrice(breakEvenPrice, lot.currency)}` : '';
-                    const soldMeta = lot.sell_date ? ` · sold ${formatDay(lot.sell_date)} · total cost ${formatEur(lot.cost_eur || 0)}` : '';
+                    const costsMeta = costs != null && costs > 0.004 ? ` · fee ${formatCompactEur(costs)}` : '';
+                    const totalMeta = ` · total ${formatEur(lot.cost_eur || 0)}`;
+                    const soldMeta = lot.sell_date ? ` · sold ${formatDay(lot.sell_date)}` : '';
                     return `
                     <button class="perf-lot${state.selectedLotId === lot.id ? ' selected' : ''}" type="button" data-lot-id="${escapeHtml(lot.id)}">
-                      <div>
+                      <div class="perf-lot-main">
                         <div class="perf-lot-date">${formatDay(lot.date)}</div>
-                        <div class="perf-lot-meta">${formatShareCount(lot.remaining_qty)}${lot.buy_price != null ? ` @ ${formatPrice(lot.buy_price, lot.currency)}` : ''}${costsMeta}${breakEvenMeta}${soldMeta}</div>
+                        <div class="perf-lot-meta">${formatShares(lot.remaining_qty)}${lot.buy_price != null ? ` × ${formatPrice(lot.buy_price, lot.currency)}` : ''}${costsMeta}${totalMeta}${soldMeta}</div>
                       </div>
                       <div class="perf-lot-right">
                         <div class="perf-lot-pct ${numberClass(lot.gain_pct)}">${lot.gain_pct != null ? formatPct(lot.gain_pct) : '—'}</div>
