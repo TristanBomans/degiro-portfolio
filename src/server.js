@@ -340,9 +340,11 @@ function splitLotsFromTransactions(transactions) {
     }));
 
   const realized = lots
-    .filter((lot) => lot.sold_qty > 1e-8 && lot.remaining_qty <= 1e-8)
+    .filter((lot) => lot.sold_qty > 1e-8)
     .map((lot) => {
-      const cost = round2(lot.original_cost_eur) || 0;
+      const cost = round2(lot.original_cost_eur - lot.remaining_cost_eur) || 0;
+      const purchaseValue = round2(lot.original_purchase_value_eur - lot.remaining_purchase_value_eur) || 0;
+      const costs = round2(lot.original_costs_eur - lot.remaining_costs_eur) || 0;
       const proceeds = round2(lot.proceeds_eur) || 0;
       const gain = round2(proceeds - cost);
       const gainPct = cost > 0 ? round2((gain / cost) * 100) : null;
@@ -352,11 +354,12 @@ function splitLotsFromTransactions(transactions) {
         sell_date: lot.sell_date,
         original_qty: lot.original_qty,
         remaining_qty: roundQty(lot.sold_qty),
+        sold_qty: roundQty(lot.sold_qty),
         buy_price: lot.buy_price,
         currency: lot.currency,
         cost_eur: cost,
-        purchase_value_eur: round2(lot.original_purchase_value_eur) || 0,
-        costs_eur: round2(lot.original_costs_eur) || 0,
+        purchase_value_eur: purchaseValue,
+        costs_eur: costs,
         value_eur: proceeds,
         gain_eur: gain,
         gain_pct: gainPct,
@@ -377,6 +380,7 @@ function decorateLots(lots, { holdingKeyPrefix, price, rate }) {
         sell_date: lot.sell_date,
         remaining_qty: lot.remaining_qty,
         original_qty: lot.original_qty,
+        sold_qty: lot.sold_qty ?? lot.remaining_qty,
         buy_price: lot.buy_price,
         currency: lot.currency,
         cost_eur: lot.cost_eur,
@@ -555,10 +559,46 @@ function buildPositionChartSeries(prices, transactions, rateFor) {
     dates.push(day);
     values.push(round2(qty * (p.close || 0) * rate));
     costs.push(round2(cost));
-    if (qty <= 0) break;
+    if (qty <= 0 && ti >= trans.length) break;
   }
 
   return downsampleSeries(dates, values, costs);
+}
+
+function nextCalendarDay(date) {
+  const value = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(value.getTime())) return date;
+  value.setUTCDate(value.getUTCDate() + 1);
+  return value.toISOString().slice(0, 10);
+}
+
+function scopedPositionTransactions(transactions, mode) {
+  if (!['open', 'sold'].includes(mode)) return transactions;
+  const { remaining, realized } = splitLotsFromTransactions(transactions);
+  const selected = mode === 'open' ? remaining : realized;
+  const synthetic = selected.map((lot, index) => ({
+    id: index * 2,
+    date: lot.date,
+    time: '',
+    quantity: lot.remaining_qty,
+    total_eur: lot.cost_eur,
+  }));
+
+  // The sold view reconstructs only the disposed FIFO quantities, then removes
+  // them on their actual sale dates. Moving sales to the next calendar day
+  // keeps the final pre-sale value visible in a daily chart.
+  if (mode === 'sold') {
+    for (const [index, transaction] of sortTransactions(transactions).filter((item) => Number(item.quantity) < 0).entries()) {
+      synthetic.push({
+        id: selected.length * 2 + index,
+        date: nextCalendarDay((transaction.date || '').split('T')[0]),
+        time: '',
+        quantity: Number(transaction.quantity),
+        total_eur: transaction.total_eur,
+      });
+    }
+  }
+  return synthetic;
 }
 
 async function collectAndPersistLiveQuotes() {
@@ -1975,36 +2015,50 @@ app.get('/api/performance', (req, res) => {
 
     for (const stock of stocks) {
       const trans = db.prepare('SELECT * FROM transactions WHERE stock_id = ? ORDER BY date, time, id').all(stock.id);
-      const open = (stock.total_qty || 0) > 0;
       const { remaining, realized } = splitLotsFromTransactions(trans);
-      const rawLots = open ? remaining : realized;
-      if (!rawLots.length) continue;
-
       const latest = latestByStock[stock.id];
       const currency = latest?.currency || stock.currency || 'EUR';
       const latestDay = latest ? (latest.date || '').split('T')[0] : null;
       const rate = getRateOnDate(currency, latestDay || '9999-12-31', globalRates, historicalRates);
-      const lots = decorateLots(rawLots, {
-        holdingKeyPrefix: `s-${stock.id}`,
-        price: latest?.close ?? null,
-        rate,
-      });
-
-      holdings.push(summarizeLots(lots, {
+      const shared = {
         id: stock.id,
-        key: `s-${stock.id}`,
         is_manual: false,
-        open,
-        kind: open
-          ? (isTrackerName(stock.name) ? 'tracker' : 'stock')
-          : 'closed',
         name: stock.name,
         symbol: stock.symbol,
         yahoo_ticker: stock.yahoo_ticker,
         exchange: stock.exchange,
         currency,
-        latest_price: latest?.close ?? null,
-      }));
+      };
+
+      if (remaining.length) {
+        const openLots = decorateLots(remaining, {
+          holdingKeyPrefix: `s-${stock.id}`,
+          price: latest?.close ?? null,
+          rate,
+        });
+        holdings.push(summarizeLots(openLots, {
+          ...shared,
+          key: `s-${stock.id}`,
+          open: true,
+          kind: isTrackerName(stock.name) ? 'tracker' : 'stock',
+          latest_price: latest?.close ?? null,
+        }));
+      }
+
+      if (realized.length) {
+        const soldLots = decorateLots(realized, {
+          holdingKeyPrefix: `s-${stock.id}-sold`,
+          price: null,
+          rate,
+        });
+        holdings.push(summarizeLots(soldLots, {
+          ...shared,
+          key: `s-${stock.id}-sold`,
+          open: false,
+          kind: 'closed',
+          latest_price: null,
+        }));
+      }
     }
   }
 
@@ -2128,9 +2182,11 @@ app.get('/api/stock/:stockId/position-chart', (req, res) => {
      ORDER BY date`
   ).all(stock.id);
   const transactions = db.prepare('SELECT * FROM transactions WHERE stock_id = ?').all(stock.id);
+  const mode = ['open', 'sold'].includes(req.query.mode) ? req.query.mode : 'all';
+  const scopedTransactions = scopedPositionTransactions(transactions, mode);
   const { globalRates, historicalRates } = loadExchangeRates(db);
 
-  res.json(buildPositionChartSeries(prices, transactions, (p, day) => (
+  res.json(buildPositionChartSeries(prices, scopedTransactions, (p, day) => (
     getRateOnDate(p.currency || stock.currency || 'EUR', day, globalRates, historicalRates)
   )));
 });

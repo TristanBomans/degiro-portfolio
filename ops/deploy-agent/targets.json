@@ -1,0 +1,15 @@
+{
+  "degiro-portfolio": {
+    "repository": "TristanBomans/degiro-portfolio",
+    "registryUsername": "TristanBomans",
+    "image": "ghcr.io/tristanbomans/degiro-portfolio",
+    "imageAliases": [
+      "ghcr.io/tristanbomans/degiro-portfolio",
+      "localhost:5011/tristanbomans/degiro-portfolio"
+    ],
+    "stacks": [
+      { "id": 115, "name": "degiro-portfolio" },
+      { "id": 116, "name": "senne-portfolio" }
+    ]
+  }
+}

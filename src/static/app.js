@@ -1985,10 +1985,14 @@
     $('lot-detail-kicker').textContent = 'Purchase';
     title.textContent = holding.name;
     showLotChartBlock();
-    const remainingNote = lot.remaining_qty !== lot.original_qty
-      ? `${formatShares(lot.remaining_qty)} of ${formatShareCount(lot.original_qty)} remaining`
-      : formatShareCount(lot.remaining_qty);
     const closed = holding.kind === 'closed' || lot.realized;
+    const remainingNote = closed
+      ? (lot.remaining_qty !== lot.original_qty
+        ? `${formatShares(lot.remaining_qty)} of ${formatShareCount(lot.original_qty)} sold`
+        : formatShareCount(lot.remaining_qty))
+      : (lot.remaining_qty !== lot.original_qty
+        ? `${formatShares(lot.remaining_qty)} of ${formatShareCount(lot.original_qty)} remaining`
+        : formatShareCount(lot.remaining_qty));
     const quantity = Number(lot.remaining_qty) || 0;
     const purchaseValue = lot.purchase_value_eur != null
       ? Number(lot.purchase_value_eur)
@@ -2195,7 +2199,8 @@
       const path = holding.is_manual
         ? `/api/manual-holdings/${holding.id}/position-chart`
         : `/api/stock/${holding.id}/position-chart`;
-      const resp = await fetch(path);
+      const mode = holding.kind === 'closed' ? 'sold' : 'open';
+      const resp = await fetch(holding.is_manual ? path : `${path}?mode=${mode}`);
       const data = await resp.json();
       if (state.selectedHoldingKey !== key || state.selectedLotId) return;
       state.lotChartData = {
