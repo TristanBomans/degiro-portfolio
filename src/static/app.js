@@ -163,6 +163,25 @@
     return new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
   }
 
+  function formatAxisEur(value, step) {
+    const sign = value < 0 ? '-' : '';
+    const amount = Math.abs(value);
+    const absStep = Math.abs(step) || 1;
+    if (amount >= 1000) {
+      const fractionDigits = absStep >= 1000 ? 0 : absStep >= 100 ? 1 : 2;
+      const compact = (amount / 1000).toLocaleString('en-US', {
+        minimumFractionDigits: fractionDigits,
+        maximumFractionDigits: fractionDigits,
+      });
+      return `${sign}€${compact}k`;
+    }
+    const fractionDigits = absStep >= 1 ? 0 : 2;
+    return `${sign}€${amount.toLocaleString('en-US', {
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
+    })}`;
+  }
+
   function numberClass(value) {
     if (value > 0) return 'positive';
     if (value < 0) return 'negative';
@@ -306,7 +325,7 @@
       this.canvas.height = Math.round(height * dpr);
       this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       this.pad = window.matchMedia('(max-width: 860px)').matches
-        ? { top: 8, right: 4, bottom: 22, left: 36 }
+        ? { top: 8, right: 4, bottom: 22, left: 44 }
         : { top: 12, right: 12, bottom: 26, left: 52 };
       const { pad } = this;
       return {
@@ -415,16 +434,15 @@
       ctx.font = `${window.matchMedia('(max-width: 860px)').matches ? 10 : 11}px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
       ctx.textAlign = 'right';
       ctx.textBaseline = 'middle';
-      for (const tick of this.niceTicks(range.min, range.max)) {
+      const yTicks = this.niceTicks(range.min, range.max);
+      const yTickStep = yTicks.length > 1 ? yTicks[1] - yTicks[0] : (range.max - range.min) / 4;
+      for (const tick of yTicks) {
         const y = this.yOf(tick, range, plotH);
         ctx.beginPath();
         ctx.moveTo(pad.left, y);
         ctx.lineTo(pad.left + plotW, y);
         ctx.stroke();
-        const label = tick >= 1000
-          ? `€${Math.round(tick / 1000)}k`
-          : `€${Math.round(tick)}`;
-        ctx.fillText(label, pad.left - 8, y);
+        ctx.fillText(formatAxisEur(tick, yTickStep), pad.left - 8, y);
       }
 
       ctx.textAlign = 'center';
@@ -566,7 +584,7 @@
       this.canvas.height = Math.round(height * dpr);
       this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       this.pad = window.matchMedia('(max-width: 860px)').matches
-        ? { top: 8, right: 4, bottom: 22, left: 36 }
+        ? { top: 8, right: 4, bottom: 22, left: 44 }
         : { top: 12, right: 12, bottom: 26, left: 52 };
       const { pad } = this;
       return {
@@ -705,14 +723,15 @@
       ctx.font = `${window.matchMedia('(max-width: 860px)').matches ? 10 : 11}px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
       ctx.textAlign = 'right';
       ctx.textBaseline = 'middle';
-      for (const tick of this.niceTicks(range.min, range.max)) {
+      const yTicks = this.niceTicks(range.min, range.max);
+      const yTickStep = yTicks.length > 1 ? yTicks[1] - yTicks[0] : (range.max - range.min) / 4;
+      for (const tick of yTicks) {
         const y = this.yOf(tick, range, plotH);
         ctx.beginPath();
         ctx.moveTo(pad.left, y);
         ctx.lineTo(pad.left + plotW, y);
         ctx.stroke();
-        const label = tick >= 1000 ? `€${Math.round(tick / 1000)}k` : `€${Math.round(tick)}`;
-        ctx.fillText(label, pad.left - 8, y);
+        ctx.fillText(formatAxisEur(tick, yTickStep), pad.left - 8, y);
       }
 
       ctx.textAlign = 'center';
