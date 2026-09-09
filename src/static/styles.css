@@ -1439,6 +1439,20 @@ body.performance-overlay-open {
   margin-top: 0.1rem;
 }
 
+.perf-lot-fee {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.18rem;
+  white-space: nowrap;
+}
+
+.perf-lot-fee svg {
+  width: 0.78rem;
+  height: 0.78rem;
+  flex: 0 0 auto;
+  transform: translateY(0.08rem);
+}
+
 .perf-lot-right {
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -2380,37 +2394,9 @@ html.dark .dialog {
     font-size: 0.8125rem;
   }
 
-  .perf-lot {
-    grid-template-areas:
-      "date result"
-      "meta meta";
-    row-gap: 0.18rem;
-  }
-
-  .perf-lot-main {
-    display: contents;
-  }
-
-  .perf-lot-date {
-    grid-area: date;
-  }
-
   .perf-lot-meta {
-    grid-area: meta;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    font-size: 0.6875rem;
     white-space: nowrap;
-  }
-
-  .perf-lot-right {
-    grid-area: result;
-    display: flex;
-    align-items: baseline;
-    gap: 0.5rem;
-  }
-
-  .perf-lot-gain {
-    margin-top: 0;
   }
 
   .lot-detail-stats {

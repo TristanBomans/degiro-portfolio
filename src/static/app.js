@@ -2104,8 +2104,10 @@
                     const costs = lot.costs_eur != null
                       ? Number(lot.costs_eur)
                       : (purchaseValue != null ? Math.max(0, Number(lot.cost_eur || 0) - purchaseValue) : null);
-                    const costsMeta = costs != null && costs > 0.004 ? ` · fee ${formatCompactEur(costs)}` : '';
-                    const totalMeta = ` · total ${formatEur(lot.cost_eur || 0)}`;
+                    const costsMeta = costs != null && costs > 0.004
+                      ? ` + <span class="perf-lot-fee" aria-label="Transaction fee ${formatCompactEur(costs)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3v18l2-1.5L10 21l2-1.5 2 1.5 2-1.5 2 1.5V3l-2 1.5L14 3l-2 1.5L10 3 8 4.5 6 3Z"/><path d="M9 9h6M9 13h6M9 17h3"/></svg><span aria-hidden="true">${formatCompactEur(costs)}</span></span>`
+                      : '';
+                    const totalMeta = ` = ${formatEur(lot.cost_eur || 0)}`;
                     const soldMeta = lot.sell_date ? ` · sold ${formatDay(lot.sell_date)}` : '';
                     return `
                     <button class="perf-lot${state.selectedLotId === lot.id ? ' selected' : ''}" type="button" data-lot-id="${escapeHtml(lot.id)}">
