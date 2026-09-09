@@ -786,10 +786,9 @@
         else ctx.lineTo(x, y);
       }
       const lastX = this.xOf(n - 1, slice.dates, plotW);
-      const fillBase = slice.costs
-        ? (slice.costs[n - 1] ?? range.min)
-        : (slice.cost ?? range.min);
-      const baseY = this.yOf(Math.max(range.min, Math.min(fillBase, range.max)), range, plotH);
+      // The area represents the value series; always close it at the bottom of
+      // the plot. A cost baseline can put fill above earlier value points.
+      const baseY = pad.top + plotH;
       ctx.lineTo(lastX, baseY);
       ctx.lineTo(this.xOf(0, slice.dates, plotW), baseY);
       ctx.closePath();
