@@ -2093,7 +2093,6 @@
       const groupItems = groupCollapsed ? '' : group.items.map((h) => {
           const collapsed = state.perfCollapsed[h.key] !== false;
           const closed = h.kind === 'closed';
-          const selected = state.selectedHoldingKey === h.key;
           const lots = [...(h.lots || [])].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
           const livePrice = !closed && h.latest_price != null
             ? `live ${formatPrice(h.latest_price, h.currency)}`
@@ -2102,7 +2101,7 @@
             ? `Sold · ${h.lots.length} purchase${h.lots.length === 1 ? '' : 's'} · realized`
             : `${formatShareCount(h.shares)} · cost ${formatEur(h.cost_eur || 0)} · now ${h.value_eur != null ? formatEur(h.value_eur) : '—'}${livePrice ? ` · ${livePrice}` : ''}`;
           return `
-            <div class="perf-holding${selected ? ' selected' : ''}" id="perf-${h.key}">
+            <div class="perf-holding" id="perf-${h.key}">
               <div class="perf-holding-row">
                 <button class="perf-chevron${collapsed ? ' collapsed' : ''}" type="button" data-perf-toggle="${h.key}" aria-label="${collapsed ? 'Expand purchases' : 'Collapse purchases'}"><span>▾</span></button>
                 <button class="perf-holding-head" type="button" data-perf-select="${h.key}">
@@ -2130,12 +2129,14 @@
                       ? ` + <span class="perf-lot-fee" aria-label="Transaction fee ${formatCompactEur(costs)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3v18l2-1.5L10 21l2-1.5 2 1.5 2-1.5 2 1.5V3l-2 1.5L14 3l-2 1.5L10 3 8 4.5 6 3Z"/><path d="M9 9h6M9 13h6M9 17h3"/></svg><span aria-hidden="true">${formatCompactEur(costs)}</span></span>`
                       : '';
                     const totalMeta = ` = ${formatEur(lot.cost_eur || 0)}`;
-                    const soldMeta = lot.sell_date ? ` · sold ${formatDay(lot.sell_date)}` : '';
+                    const dateLabel = lot.sell_date
+                      ? `${formatDay(lot.date)} → ${formatDay(lot.sell_date)}`
+                      : formatDay(lot.date);
                     return `
                     <button class="perf-lot${state.selectedLotId === lot.id ? ' selected' : ''}" type="button" data-lot-id="${escapeHtml(lot.id)}">
                       <div class="perf-lot-main">
-                        <div class="perf-lot-date">${formatDay(lot.date)}</div>
-                        <div class="perf-lot-meta">${formatShares(lot.remaining_qty)}${lot.buy_price != null ? ` × ${formatPrice(lot.buy_price, lot.currency)}` : ''}${costsMeta}${totalMeta}${soldMeta}</div>
+                        <div class="perf-lot-date">${dateLabel}</div>
+                        <div class="perf-lot-meta">${formatShares(lot.remaining_qty)}${lot.buy_price != null ? ` × ${formatPrice(lot.buy_price, lot.currency)}` : ''}${costsMeta}${totalMeta}</div>
                       </div>
                       <div class="perf-lot-right">
                         <div class="perf-lot-pct ${numberClass(lot.gain_pct)}">${lot.gain_pct != null ? formatPct(lot.gain_pct) : '—'}</div>
@@ -2263,18 +2264,18 @@
 
   function syncPerfDetailAction() {
     const btn = $('perf-expand-btn');
-    if (state.perfOverlayOpen) {
+    if (state.perfOverlayOpen || state.perfDetailExpanded) {
       btn.hidden = false;
-      btn.classList.add('is-back');
-      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg> Close';
-      btn.setAttribute('aria-label', 'Close performance detail');
+      btn.classList.add('btn-icon');
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+      btn.setAttribute('aria-label', state.perfOverlayOpen ? 'Close performance detail' : 'Back to holdings');
+      btn.title = state.perfOverlayOpen ? 'Close' : 'Back to holdings';
       return;
     }
-    btn.classList.toggle('is-back', state.perfDetailExpanded);
-    btn.innerHTML = state.perfDetailExpanded
-      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg> Holdings'
-      : 'Expand';
-    btn.setAttribute('aria-label', state.perfDetailExpanded ? 'Back to holdings' : 'Expand chart');
+    btn.classList.remove('btn-icon');
+    btn.innerHTML = 'Expand';
+    btn.setAttribute('aria-label', 'Expand chart');
+    btn.title = '';
   }
 
   function setPerfExpanded(expanded) {

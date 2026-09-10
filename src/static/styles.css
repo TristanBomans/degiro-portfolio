@@ -1318,11 +1318,6 @@ body.performance-overlay-open {
   overflow: hidden;
 }
 
-.perf-holding.selected {
-  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 22%, transparent);
-}
-
 .perf-holding-row {
   display: flex;
   align-items: stretch;
@@ -1431,12 +1426,22 @@ body.performance-overlay-open {
 .perf-lot-date {
   font-weight: 600;
   font-size: 0.8125rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.perf-lot-main {
+  min-width: 0;
 }
 
 .perf-lot-meta {
   font-size: 0.75rem;
   color: var(--muted-foreground);
   margin-top: 0.1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .perf-lot-fee {
@@ -2394,8 +2399,7 @@ html.dark .dialog {
   }
 
   .perf-lot-meta {
-    font-size: 0.6875rem;
-    white-space: nowrap;
+    font-size: 0.625rem;
   }
 
   .lot-detail-stats {
