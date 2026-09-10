@@ -2531,6 +2531,7 @@ html.dark .dialog {
   .performance-sheet {
     width: 100%;
     min-height: 100dvh;
+    animation: none;
   }
 
   .performance-overlay .panel-lot-detail {

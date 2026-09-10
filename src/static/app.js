@@ -2255,12 +2255,12 @@
     await loadLotChart(found.holding, found.lot);
   }
 
-  async function selectPosition(key, { scroll = false } = {}) {
+  async function selectPosition(key, { scroll = false, expandList = true } = {}) {
     const holding = state.performanceHoldings.find((h) => h.key === key);
     if (!holding) return;
     state.selectedHoldingKey = key;
     state.selectedLotId = null;
-    state.perfCollapsed[key] = false;
+    if (expandList) state.perfCollapsed[key] = false;
     renderPerformance();
     revealPerfDetail();
     if (scroll && !isCompactView()) {
@@ -2332,7 +2332,7 @@
     state.perfOverlayHistoryEntry = true;
     syncPerfDetailAction();
 
-    await selectPosition(key);
+    await selectPosition(key, { expandList: false });
     requestAnimationFrame(() => {
       $('performance-overlay-sheet').focus({ preventScroll: true });
       lotChart.draw();
