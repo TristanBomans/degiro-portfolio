@@ -868,6 +868,10 @@
     document.querySelectorAll('.nav-item[data-view]').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.view === name);
     });
+    document.querySelectorAll('.mobile-tab[data-view]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.view === name);
+    });
+    $('mobile-more-btn')?.classList.toggle('active', name === 'brokers');
     document.querySelectorAll('.view').forEach((view) => {
       view.classList.toggle('active', view.id === `view-${name}`);
     });
@@ -877,6 +881,7 @@
       $('view-subtitle').textContent = meta.subtitle;
     }
     setSidebarOpen(false);
+    setMobileMoreOpen(false);
     if (name === 'graph') {
       requestAnimationFrame(() => valuationChart.draw());
     }
@@ -1603,12 +1608,14 @@
     const account = $('gmail-account');
     const scanBtn = $('gmail-scan-btn');
     const sidebarScan = $('sidebar-scan-btn');
+    const mobileScan = $('mobile-scan-btn');
     const disconnectBtn = $('gmail-disconnect-btn');
 
     setup.hidden = Boolean(status.connected);
     account.hidden = !status.connected;
     scanBtn.hidden = !status.connected;
     if (sidebarScan) sidebarScan.hidden = !status.connected;
+    if (mobileScan) mobileScan.hidden = !status.connected;
     disconnectBtn.hidden = !status.connected;
 
     if (status.connected) {
@@ -2362,16 +2369,36 @@
     if (backdrop) backdrop.hidden = !open;
   }
 
+  function setMobileMoreOpen(open) {
+    const menu = $('mobile-more');
+    const button = $('mobile-more-btn');
+    if (!menu || !button) return;
+    menu.hidden = !open;
+    menu.setAttribute('aria-hidden', String(!open));
+    button.setAttribute('aria-expanded', String(open));
+    button.classList.toggle('is-open', open);
+    document.body.classList.toggle('mobile-more-open', open);
+    if (open) {
+      requestAnimationFrame(() => menu.querySelector('.mobile-more-item:not([hidden])')?.focus({ preventScroll: true }));
+    }
+  }
+
   function bindEvents() {
-    document.querySelectorAll('.nav-item[data-view]').forEach((btn) => {
+    document.querySelectorAll('.nav-item[data-view], .mobile-tab[data-view], .mobile-more-item[data-view]').forEach((btn) => {
       btn.addEventListener('click', () => setView(btn.dataset.view));
     });
     $('menu-btn').addEventListener('click', () => {
       setSidebarOpen(!$('sidebar').classList.contains('open'));
     });
     $('sidebar-backdrop').addEventListener('click', () => setSidebarOpen(false));
+    $('mobile-more-btn').addEventListener('click', () => setMobileMoreOpen($('mobile-more').hidden));
+    $('mobile-more-backdrop').addEventListener('click', () => setMobileMoreOpen(false));
     $('theme-toggle').addEventListener('click', toggleTheme);
     $('settings-btn').addEventListener('click', openSettings);
+    $('mobile-settings-btn').addEventListener('click', () => {
+      setMobileMoreOpen(false);
+      openSettings();
+    });
     $('settings-close').addEventListener('click', () => closeOverlay('settings-overlay'));
     $('settings-overlay').addEventListener('click', (e) => {
       if (e.target === $('settings-overlay')) closeOverlay('settings-overlay');
@@ -2382,6 +2409,10 @@
     });
     $('gmail-scan-btn').addEventListener('click', () => scanGmailConfirmations());
     $('sidebar-scan-btn').addEventListener('click', () => scanGmailConfirmations());
+    $('mobile-scan-btn').addEventListener('click', () => {
+      setMobileMoreOpen(false);
+      scanGmailConfirmations();
+    });
     $('gmail-disconnect-btn').addEventListener('click', async () => {
       try {
         const resp = await fetch('/api/gmail/disconnect', { method: 'POST' });
@@ -2521,6 +2552,11 @@
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
+        if (!$('mobile-more').hidden) {
+          setMobileMoreOpen(false);
+          $('mobile-more-btn').focus({ preventScroll: true });
+          return;
+        }
         if (state.perfOverlayOpen) {
           closePerformanceOverlay();
           return;
