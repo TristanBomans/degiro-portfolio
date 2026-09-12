@@ -45,6 +45,7 @@
     uploadInProgress: false,
     livePricesInterval: null,
     hasData: false,
+    serverWasOffline: false,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -917,9 +918,15 @@
       clearTimeout(timeout);
       const ok = resp.ok;
       $('offline-banner').classList.toggle('show', !ok);
+      if (ok && state.serverWasOffline) {
+        window.location.reload();
+        return true;
+      }
+      state.serverWasOffline = !ok;
       return ok;
     } catch {
       $('offline-banner').classList.add('show');
+      state.serverWasOffline = true;
       return false;
     }
   }

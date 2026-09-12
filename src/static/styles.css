@@ -2038,16 +2038,55 @@ html.dark .dialog {
 
 .offline-banner {
   display: none;
-  margin-bottom: 1rem;
-  padding: 0.85rem 1rem;
-  border: 1px solid color-mix(in srgb, var(--error) 30%, var(--border));
-  border-radius: var(--radius);
-  background: var(--error-surface);
-  color: var(--error-foreground);
+  align-self: flex-start;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 100%;
+  margin-bottom: 0.75rem;
+  padding: 0.42rem 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--warning) 24%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warning-surface) 55%, var(--card));
+  color: var(--muted-foreground);
+  box-shadow: 0 4px 16px -12px rgb(0 0 0 / 45%);
+  font-size: 0.75rem;
+  line-height: 1.2;
 }
 
 .offline-banner.show {
-  display: block;
+  display: inline-flex;
+  animation: offline-status-in 220ms ease-out both;
+}
+
+.offline-banner::before {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 999px;
+  background: var(--warning);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 35%, transparent);
+  content: "";
+  flex-shrink: 0;
+  animation: offline-status-pulse 1.8s ease-out infinite;
+}
+
+.offline-banner strong {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.offline-banner strong::after {
+  color: var(--muted-foreground);
+  content: " ·";
+  font-weight: 400;
+}
+
+@keyframes offline-status-in {
+  from { opacity: 0; transform: translateY(-0.25rem); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes offline-status-pulse {
+  60%, 100% { box-shadow: 0 0 0 0.3rem transparent; }
 }
 
 .workspace-loader {
@@ -2203,6 +2242,10 @@ html.dark .dialog {
   .main {
     padding: 0;
     padding-bottom: calc(4rem + env(safe-area-inset-bottom));
+  }
+
+  .offline-banner {
+    margin: 0.6rem max(0.75rem, env(safe-area-inset-right)) 0.6rem max(0.75rem, env(safe-area-inset-left));
   }
 
   .mobile-nav {

@@ -85,7 +85,10 @@
       </header>
 
       <main class="main">
-        <div class="offline-banner" id="offline-banner">Server is not responding. Start it with <code>npm start</code>.</div>
+        <div class="offline-banner" id="offline-banner" role="status">
+          <strong>Out of sync</strong>
+          <span>Reconnecting…</span>
+        </div>
         <div class="workspace-loader" id="loading" role="status" aria-live="polite">
           <div class="loader-heading">
             <span class="loader-mark" aria-hidden="true">
