@@ -909,6 +909,14 @@
     }
   }
 
+  function setConnectionStatus(online) {
+    const button = $('live-refresh-btn');
+    button.classList.toggle('is-offline', !online);
+    const label = online ? 'Refresh live prices' : 'Out of sync — reconnecting automatically';
+    button.title = label;
+    button.setAttribute('aria-label', label);
+  }
+
   async function checkServerStatus() {
     if (state.uploadInProgress) return true;
     try {
@@ -917,7 +925,7 @@
       const resp = await fetch('/api/ping', { signal: controller.signal });
       clearTimeout(timeout);
       const ok = resp.ok;
-      $('offline-banner').classList.toggle('show', !ok);
+      setConnectionStatus(ok);
       if (ok && state.serverWasOffline) {
         window.location.reload();
         return true;
@@ -925,7 +933,7 @@
       state.serverWasOffline = !ok;
       return ok;
     } catch {
-      $('offline-banner').classList.add('show');
+      setConnectionStatus(false);
       state.serverWasOffline = true;
       return false;
     }
