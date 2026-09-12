@@ -891,21 +891,12 @@
 
     const mobileMotion = window.matchMedia('(max-width: 860px)').matches
       && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const motionClass = direction === 'forward' ? 'view-forward' : 'view-back';
-    document.documentElement.classList.add(motionClass);
-
-    if (mobileMotion && document.startViewTransition) {
-      const transition = document.startViewTransition(activateView);
-      transition.finished.finally(() => document.documentElement.classList.remove(motionClass));
-    } else {
-      activateView();
-      const activeView = $(`view-${name}`);
-      if (mobileMotion) {
-        const enterClass = direction === 'forward' ? 'view-enter-forward' : 'view-enter-back';
-        activeView.classList.add(enterClass);
-        activeView.addEventListener('animationend', () => activeView.classList.remove(enterClass), { once: true });
-      }
-      document.documentElement.classList.remove(motionClass);
+    activateView();
+    const activeView = $(`view-${name}`);
+    if (mobileMotion) {
+      const enterClass = direction === 'forward' ? 'view-enter-forward' : 'view-enter-back';
+      activeView.classList.add(enterClass);
+      activeView.addEventListener('animationend', () => activeView.classList.remove(enterClass), { once: true });
     }
     setSidebarOpen(false);
     setMobileMoreOpen(false);

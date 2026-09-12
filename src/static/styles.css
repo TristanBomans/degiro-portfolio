@@ -477,68 +477,24 @@ html.dark .brand-mark {
 
 .view.active {
   display: block;
-  view-transition-name: portfolio-view;
-}
-
-.topbar-title {
-  view-transition-name: portfolio-title;
-}
-
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation: none;
-}
-
-::view-transition-old(portfolio-view),
-::view-transition-new(portfolio-view),
-::view-transition-old(portfolio-title),
-::view-transition-new(portfolio-title) {
-  animation-duration: 280ms;
-  animation-timing-function: var(--motion-spring);
-}
-
-html.view-forward::view-transition-old(portfolio-view) {
-  animation-name: view-old-forward;
-}
-
-html.view-forward::view-transition-new(portfolio-view) {
-  animation-name: view-enter-forward;
-}
-
-html.view-back::view-transition-old(portfolio-view) {
-  animation-name: view-old-back;
-}
-
-html.view-back::view-transition-new(portfolio-view) {
-  animation-name: view-enter-back;
 }
 
 .view.view-enter-forward {
-  animation: view-enter-forward 280ms var(--motion-spring) both;
+  animation: view-enter-forward 180ms ease-out both;
 }
 
 .view.view-enter-back {
-  animation: view-enter-back 280ms var(--motion-spring) both;
+  animation: view-enter-back 180ms ease-out both;
 }
 
 @keyframes view-enter-forward {
-  from { opacity: 0; transform: translate3d(18px, 0, 0); }
-  to { opacity: 1; transform: translate3d(0, 0, 0); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 @keyframes view-enter-back {
-  from { opacity: 0; transform: translate3d(-18px, 0, 0); }
-  to { opacity: 1; transform: translate3d(0, 0, 0); }
-}
-
-@keyframes view-old-forward {
-  from { opacity: 1; transform: translate3d(0, 0, 0); }
-  to { opacity: 0; transform: translate3d(-10px, 0, 0); }
-}
-
-@keyframes view-old-back {
-  from { opacity: 1; transform: translate3d(0, 0, 0); }
-  to { opacity: 0; transform: translate3d(10px, 0, 0); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 #view-history.active {
@@ -2262,6 +2218,8 @@ html.dark .dialog {
     -webkit-backdrop-filter: blur(18px) saturate(130%);
     backdrop-filter: blur(18px) saturate(130%);
     box-shadow: 0 -12px 30px -24px rgb(0 0 0 / 65%);
+    isolation: isolate;
+    transform: translateZ(0);
   }
 
   .mobile-tab {
@@ -2942,12 +2900,4 @@ html.dark .dialog {
     transition-duration: 0.01ms !important;
   }
 
-  ::view-transition-old(root),
-  ::view-transition-new(root),
-  ::view-transition-old(portfolio-view),
-  ::view-transition-new(portfolio-view),
-  ::view-transition-old(portfolio-title),
-  ::view-transition-new(portfolio-title) {
-    animation: none !important;
-  }
 }
