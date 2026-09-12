@@ -8,6 +8,7 @@
   };
 
   const TRACKER_KEYWORDS = ['ETF', 'UCITS', 'Tracker', 'iShares', 'Vanguard', 'SPDR', 'Amundi', 'Xtrackers', 'Lyxor'];
+  const VIEW_ORDER = ['overview', 'graph', 'performance', 'history', 'brokers'];
 
   const state = {
     holdings: [],
@@ -227,7 +228,7 @@
   function setLoading(text, visible) {
     const row = $('loading');
     if (text) $('loading-status').textContent = text;
-    row.style.display = visible ? 'flex' : 'none';
+    row.style.display = visible ? '' : 'none';
   }
 
   function cssVar(name) {
@@ -862,23 +863,49 @@
 
   function setView(name) {
     const current = document.querySelector('.view.active')?.id?.replace(/^view-/, '');
+    if (!VIEW_META[name]) return;
+    if (current === name) {
+      setSidebarOpen(false);
+      setMobileMoreOpen(false);
+      return;
+    }
     if (current === 'performance' && name !== 'performance') {
       setPerfExpanded(false);
     }
-    document.querySelectorAll('.nav-item[data-view]').forEach((btn) => {
-      btn.classList.toggle('active', btn.dataset.view === name);
-    });
-    document.querySelectorAll('.mobile-tab[data-view]').forEach((btn) => {
-      btn.classList.toggle('active', btn.dataset.view === name);
-    });
-    $('mobile-more-btn')?.classList.toggle('active', name === 'brokers');
-    document.querySelectorAll('.view').forEach((view) => {
-      view.classList.toggle('active', view.id === `view-${name}`);
-    });
-    const meta = VIEW_META[name];
-    if (meta) {
+    const direction = VIEW_ORDER.indexOf(name) >= VIEW_ORDER.indexOf(current) ? 'forward' : 'back';
+    const activateView = () => {
+      document.querySelectorAll('.nav-item[data-view]').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.view === name);
+      });
+      document.querySelectorAll('.mobile-tab[data-view]').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.view === name);
+      });
+      $('mobile-more-btn')?.classList.toggle('active', name === 'brokers');
+      document.querySelectorAll('.view').forEach((view) => {
+        view.classList.toggle('active', view.id === `view-${name}`);
+      });
+      const meta = VIEW_META[name];
       $('view-title').textContent = meta.title;
       $('view-subtitle').textContent = meta.subtitle;
+    };
+
+    const mobileMotion = window.matchMedia('(max-width: 860px)').matches
+      && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const motionClass = direction === 'forward' ? 'view-forward' : 'view-back';
+    document.documentElement.classList.add(motionClass);
+
+    if (mobileMotion && document.startViewTransition) {
+      const transition = document.startViewTransition(activateView);
+      transition.finished.finally(() => document.documentElement.classList.remove(motionClass));
+    } else {
+      activateView();
+      const activeView = $(`view-${name}`);
+      if (mobileMotion) {
+        const enterClass = direction === 'forward' ? 'view-enter-forward' : 'view-enter-back';
+        activeView.classList.add(enterClass);
+        activeView.addEventListener('animationend', () => activeView.classList.remove(enterClass), { once: true });
+      }
+      document.documentElement.classList.remove(motionClass);
     }
     setSidebarOpen(false);
     setMobileMoreOpen(false);
@@ -1580,12 +1607,26 @@
     }
   }
 
+  function openOverlay(id) {
+    const overlay = $(id);
+    clearTimeout(Number(overlay.dataset.closeTimer));
+    overlay.classList.remove('is-closing');
+    overlay.classList.add('show');
+  }
+
   function closeOverlay(id) {
-    $(id).classList.remove('show');
+    const overlay = $(id);
+    if (!overlay.classList.contains('show') || overlay.classList.contains('is-closing')) return;
+    overlay.classList.add('is-closing');
+    const timer = setTimeout(() => {
+      overlay.classList.remove('show', 'is-closing');
+      delete overlay.dataset.closeTimer;
+    }, 190);
+    overlay.dataset.closeTimer = String(timer);
   }
 
   function openSettings() {
-    $('settings-overlay').classList.add('show');
+    openOverlay('settings-overlay');
     loadGmailStatus();
   }
 
@@ -1769,7 +1810,7 @@
         </div>
       </div>
     `;
-    $('scan-overlay').classList.add('show');
+    openOverlay('scan-overlay');
     const importBtn = $('scan-import-btn');
     if (importBtn && result.newCount) {
       importBtn.onclick = () => confirmScanImport(result.token);
@@ -1824,7 +1865,7 @@
         </div>
       </div>
     `;
-    $('confirm-overlay').classList.add('show');
+    openOverlay('confirm-overlay');
     $('confirm-action').onclick = () => {
       closeOverlay('confirm-overlay');
       onConfirm();
@@ -1855,7 +1896,7 @@
         </div>
       </div>
     `;
-    $('manual-overlay').classList.add('show');
+    openOverlay('manual-overlay');
   }
 
   async function submitManualHolding() {
@@ -2373,7 +2414,19 @@
     const menu = $('mobile-more');
     const button = $('mobile-more-btn');
     if (!menu || !button) return;
-    menu.hidden = !open;
+    clearTimeout(Number(menu.dataset.closeTimer));
+    if (open) {
+      menu.hidden = false;
+      menu.classList.remove('is-closing');
+    } else if (!menu.hidden && !menu.classList.contains('is-closing')) {
+      menu.classList.add('is-closing');
+      const timer = setTimeout(() => {
+        menu.hidden = true;
+        menu.classList.remove('is-closing');
+        delete menu.dataset.closeTimer;
+      }, 190);
+      menu.dataset.closeTimer = String(timer);
+    }
     menu.setAttribute('aria-hidden', String(!open));
     button.setAttribute('aria-expanded', String(open));
     button.classList.toggle('is-open', open);
@@ -2381,6 +2434,22 @@
     if (open) {
       requestAnimationFrame(() => menu.querySelector('.mobile-more-item:not([hidden])')?.focus({ preventScroll: true }));
     }
+  }
+
+  function bindTouchFeedback() {
+    if (!window.matchMedia('(pointer: coarse)').matches) return;
+    document.addEventListener('pointerdown', (event) => {
+      if (event.pointerType === 'mouse') return;
+      const target = event.target.closest('.btn, .mobile-tab, .mobile-more-item, .holding-row.is-clickable, .tt-holding-row.is-clickable, [data-perf-select], [data-lot-id], .seg button');
+      if (!target || target.matches(':disabled')) return;
+      const rect = target.getBoundingClientRect();
+      const ripple = document.createElement('span');
+      ripple.className = 'tap-ripple';
+      ripple.style.left = `${event.clientX - rect.left}px`;
+      ripple.style.top = `${event.clientY - rect.top}px`;
+      target.appendChild(ripple);
+      ripple.addEventListener('animationend', () => ripple.remove(), { once: true });
+    }, { passive: true });
   }
 
   function bindEvents() {
@@ -2580,6 +2649,7 @@
   async function initialize() {
     initTheme();
     bindEvents();
+    bindTouchFeedback();
     renderLotRangeButtons();
     setInterval(checkServerStatus, 5000);
 

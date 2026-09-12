@@ -86,7 +86,22 @@
 
       <main class="main">
         <div class="offline-banner" id="offline-banner">Server is not responding. Start it with <code>npm start</code>.</div>
-        <div class="loading-row" id="loading"><span class="ghost"></span><span id="loading-status">Loading workspace…</span></div>
+        <div class="workspace-loader" id="loading" role="status" aria-live="polite">
+          <div class="loader-heading">
+            <span class="loader-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M3 17.5 8.2 11l4.1 3.2L21 5.5" pathLength="1"/>
+              </svg>
+            </span>
+            <span id="loading-status">Preparing your portfolio…</span>
+          </div>
+          <div class="loader-summary" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <div class="loader-list" aria-hidden="true">
+            <span></span><span></span><span></span><span></span>
+          </div>
+        </div>
         <div id="error" class="muted-empty" style="display:none;"></div>
 
         <section class="view active" id="view-overview">
