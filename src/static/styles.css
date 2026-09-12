@@ -1239,12 +1239,20 @@ body.performance-overlay-open {
   display: block;
 }
 
+.performance-overlay.is-preparing .performance-sheet {
+  visibility: hidden;
+}
+
 .performance-sheet {
   width: min(60rem, 100%);
   min-height: calc(100dvh - clamp(2rem, 8vw, 6rem));
   margin: 0 auto;
   outline: none;
-  animation: performance-sheet-in 180ms ease-out;
+  contain: inline-size;
+}
+
+.performance-overlay.show.is-ready .performance-sheet {
+  animation: performance-sheet-in 180ms ease-out both;
 }
 
 .performance-overlay .panel-lot-detail {
@@ -1260,14 +1268,8 @@ body.performance-overlay-open {
 }
 
 @keyframes performance-sheet-in {
-  from {
-    opacity: 0;
-    transform: translateY(0.75rem);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1770,13 +1772,13 @@ body.performance-overlay-open {
 }
 
 @keyframes dialog-in {
-  from { opacity: 0; transform: translateY(0.75rem); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 @keyframes dialog-out {
-  from { opacity: 1; transform: translateY(0); }
-  to { opacity: 0; transform: translateY(0.45rem); }
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 .dialog {
@@ -2814,14 +2816,23 @@ html.dark .dialog {
   }
 
   .performance-sheet {
-    width: 100%;
+    position: relative;
+    right: 0;
+    left: 0;
+    width: auto;
+    max-width: none;
     min-height: 100dvh;
-    animation: mobile-detail-in 300ms var(--motion-spring) both;
+    margin: 0;
+    animation: none;
+  }
+
+  .performance-overlay.show.is-ready .performance-sheet {
+    animation: mobile-detail-in 180ms ease-out both;
   }
 
   @keyframes mobile-detail-in {
-    from { opacity: 0; transform: translate3d(0, 0.65rem, 0); }
-    to { opacity: 1; transform: translate3d(0, 0, 0); }
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
 
   .performance-overlay .panel-lot-detail {

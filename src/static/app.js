@@ -2333,7 +2333,7 @@
     state.perfOverlayOpen = false;
     state.perfOverlayHistoryEntry = false;
     state.perfOverlayTrigger = null;
-    $('performance-overlay').classList.remove('show');
+    $('performance-overlay').classList.remove('show', 'is-preparing', 'is-ready');
     $('performance-overlay').setAttribute('aria-hidden', 'true');
     document.body.classList.remove('performance-overlay-open');
     document.querySelector('.app').inert = false;
@@ -2354,9 +2354,12 @@
 
     state.perfOverlayTrigger = trigger || document.activeElement;
     state.perfOverlayOpen = true;
-    $('performance-overlay-sheet').appendChild(document.querySelector('.panel-lot-detail'));
-    $('performance-overlay').classList.add('show');
-    $('performance-overlay').setAttribute('aria-hidden', 'false');
+    const overlay = $('performance-overlay');
+    const sheet = $('performance-overlay-sheet');
+    sheet.appendChild(document.querySelector('.panel-lot-detail'));
+    overlay.classList.remove('is-ready');
+    overlay.classList.add('show', 'is-preparing');
+    overlay.setAttribute('aria-hidden', 'false');
     document.body.classList.add('performance-overlay-open');
     document.querySelector('.app').inert = true;
     const historyState = history.state && typeof history.state === 'object' ? history.state : {};
@@ -2364,11 +2367,20 @@
     state.perfOverlayHistoryEntry = true;
     syncPerfDetailAction();
 
-    await selectPosition(key, { expandList: false });
+    const selection = selectPosition(key, { expandList: false });
     requestAnimationFrame(() => {
-      $('performance-overlay-sheet').focus({ preventScroll: true });
+      if (!state.perfOverlayOpen) return;
       lotChart.draw();
+      requestAnimationFrame(() => {
+        if (!state.perfOverlayOpen) return;
+        overlay.classList.remove('is-preparing');
+        overlay.classList.add('is-ready');
+        sheet.focus({ preventScroll: true });
+        lotChart.draw();
+      });
     });
+    await selection;
+    if (state.perfOverlayOpen) requestAnimationFrame(() => lotChart.draw());
   }
 
   async function loadPerformance() {
