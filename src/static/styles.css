@@ -683,10 +683,12 @@ html.dark .brand-mark {
 
 .connection-status.loading .connection-icon-online {
   opacity: 1;
+  animation: connection-spin 0.8s linear infinite;
 }
 
 .connection-status.loading .connection-icon-offline {
   opacity: 0;
+  animation: none;
 }
 
 @keyframes spin {
@@ -696,6 +698,11 @@ html.dark .brand-mark {
 @keyframes connection-pulse {
   0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 35%, transparent); }
   60%, 100% { box-shadow: 0 0 0 0.28rem transparent; }
+}
+
+@keyframes connection-spin {
+  from { transform: rotate(0deg) scale(1); }
+  to { transform: rotate(360deg) scale(1); }
 }
 
 .panel {
