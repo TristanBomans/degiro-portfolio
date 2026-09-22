@@ -39,8 +39,7 @@
     latestPortfolioHistoryData: null,
     portfolioHistoryDates: [],
     selectedHistoryDate: null,
-    ttMinDate: null,
-    ttMaxDate: null,
+    chartRangeOffset: 0,
     exchangeRates: { EUR: 1, USD: null, SEK: null, GBP: null },
     uploadInProgress: false,
     livePricesInterval: null,
@@ -254,6 +253,7 @@
     wrap: null,
     tooltip: null,
     hoverIndex: null,
+    scrubbing: false,
     bound: false,
     pad: { top: 12, right: 12, bottom: 26, left: 52 },
 
@@ -266,16 +266,36 @@
       if (this.bound) return;
       this.bound = true;
 
-      const onMove = (e) => this.onPointer(e);
-      this.canvas.addEventListener('pointermove', onMove);
-      this.canvas.addEventListener('pointerdown', (e) => {
+      // Touch scrubs the selection (the header above shows the values), while a
+      // mouse keeps the hover tooltip and selects on click or drag.
+      const selectAt = (e) => {
         const idx = this.indexFromEvent(e);
-        if (idx == null) return;
-        const slice = this.visibleSlice();
-        const date = slice.dates[idx];
-        if (date) syncHistoryDate(date, 'chart');
+        const date = idx != null ? this.visibleSlice()?.dates[idx] : null;
+        if (date) selectGraphDate(date);
+      };
+      this.canvas.addEventListener('pointerdown', (e) => {
+        this.scrubbing = true;
+        this.canvas.setPointerCapture?.(e.pointerId);
+        if (e.pointerType !== 'mouse') this.tooltip.hidden = true;
+        selectAt(e);
       });
-      this.canvas.addEventListener('pointerleave', () => {
+      this.canvas.addEventListener('pointermove', (e) => {
+        if (this.scrubbing) selectAt(e);
+        if (e.pointerType === 'mouse') this.onPointer(e);
+      });
+      const endScrub = (e) => {
+        if (!this.scrubbing) return;
+        this.scrubbing = false;
+        if (e.pointerType !== 'mouse') {
+          this.hoverIndex = null;
+          this.draw();
+        }
+        scheduleGraphSnapshot(true);
+      };
+      this.canvas.addEventListener('pointerup', endScrub);
+      this.canvas.addEventListener('pointercancel', endScrub);
+      this.canvas.addEventListener('pointerleave', (e) => {
+        if (e.pointerType !== 'mouse') return;
         this.hoverIndex = null;
         this.tooltip.hidden = true;
         this.draw();
@@ -286,14 +306,7 @@
     visibleSlice() {
       const data = state.latestPortfolioHistoryData;
       if (!data?.dates?.length) return null;
-      const [start, end] = getChartRangeBounds(state.selectedChartRange, data.dates);
-      let startIdx = data.dates.findIndex((d) => d >= start);
-      let endIdx = data.dates.length - 1;
-      for (let i = data.dates.length - 1; i >= 0; i--) {
-        if (data.dates[i] <= end) { endIdx = i; break; }
-      }
-      if (startIdx === -1) startIdx = 0;
-      if (endIdx < startIdx) endIdx = startIdx;
+      const { startIdx, endIdx } = graphWindow();
       return {
         dates: data.dates.slice(startIdx, endIdx + 1),
         values: data.values.slice(startIdx, endIdx + 1),
@@ -455,7 +468,9 @@
         const label = formatAxisDate(date);
         if (seen.has(label) && date !== xTicks[0] && date !== xTicks[xTicks.length - 1]) continue;
         seen.add(label);
-        ctx.fillText(label, xOfTime(date, slice.dates, pad.left, plotW), pad.top + plotH + 8);
+        const isLast = date === xTicks[xTicks.length - 1] && xTicks.length > 1;
+        ctx.textAlign = isLast ? 'right' : 'center';
+        ctx.fillText(label, isLast ? pad.left + plotW : xOfTime(date, slice.dates, pad.left, plotW), pad.top + plotH + 8);
       }
 
       const pathFor = (series) => {
@@ -520,6 +535,15 @@
           ctx.lineTo(x, pad.top + plotH);
           ctx.stroke();
           ctx.setLineDash([]);
+          if (slice.values[mi] != null && this.hoverIndex !== mi) {
+            ctx.beginPath();
+            ctx.fillStyle = colors.value;
+            ctx.arc(x, this.yOf(slice.values[mi], range, plotH), 3.6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = cssVar('--card') || '#fff';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+          }
         }
       }
 
@@ -744,7 +768,9 @@
         const label = formatAxisDate(date);
         if (seen.has(label) && date !== xTicks[0] && date !== xTicks[xTicks.length - 1]) continue;
         seen.add(label);
-        ctx.fillText(label, xOfTime(date, slice.dates, pad.left, plotW), pad.top + plotH + 8);
+        const isLast = date === xTicks[xTicks.length - 1] && xTicks.length > 1;
+        ctx.textAlign = isLast ? 'right' : 'center';
+        ctx.fillText(label, isLast ? pad.left + plotW : xOfTime(date, slice.dates, pad.left, plotW), pad.top + plotH + 8);
       }
 
       const pathFor = (series) => {
@@ -1131,6 +1157,39 @@
     return [dates[0], lastDate];
   }
 
+  const RANGE_SPANS = { '1W': { days: 7 }, '1M': { months: 1 }, '1Y': { months: 12 }, '3Y': { months: 36 }, '5Y': { months: 60 } };
+
+  function shiftIsoDate(date, { days = 0, months = 0 }) {
+    const [y, m, d] = date.split('-').map(Number);
+    return months ? addMonthsToDate(y, m, d, months) : addDaysToDate(y, m, d, days);
+  }
+
+  // A graph window is the selected range moved back `offset` whole periods
+  // (offset <= 0). Rolling ranges tile end to end; YTD steps through calendar years.
+  function getChartWindowBounds(rangeKey, dates, offset = 0) {
+    if (!dates?.length) return { start: null, end: null, label: rangeKey, shiftable: false };
+    const lastDate = dates[dates.length - 1];
+    if (rangeKey === 'YTD') {
+      const year = Number(lastDate.slice(0, 4)) + offset;
+      return {
+        start: `${year}-01-01`,
+        end: offset === 0 ? lastDate : `${year}-12-31`,
+        label: offset === 0 ? 'YTD' : String(year),
+        calendar: true,
+        shiftable: true,
+      };
+    }
+    const span = RANGE_SPANS[rangeKey];
+    if (!span) {
+      return { start: dates[0], end: lastDate, label: 'All', zeroBaseline: true, shiftable: false };
+    }
+    const end = offset === 0
+      ? lastDate
+      : shiftIsoDate(lastDate, { days: (span.days || 0) * offset, months: (span.months || 0) * offset });
+    const start = shiftIsoDate(end, { days: -(span.days || 0), months: -(span.months || 0) });
+    return { start, end, label: rangeKey, shiftable: true };
+  }
+
   function availablePerfRanges(dates) {
     if (!dates?.length) return CHART_RANGES.filter((key) => ALWAYS_PERF_RANGES.has(key));
     const first = dates[0];
@@ -1180,22 +1239,25 @@
     const rows = [];
     const yearTotals = new Map();
 
+    // Gain excludes money moved in or out: a month where €1,000 is invested
+    // and the value rises by €1,000 gained nothing. Returns use the capital at
+    // work (opening value plus new money), the same measure as the graph.
+    const periodReturn = (start, end) => {
+      const flow = end.invested - start.invested;
+      const gain = end.value - start.value - flow;
+      const base = start.value + Math.max(0, flow);
+      return { gain, pct: base > 0 ? (gain / base) * 100 : 0 };
+    };
     for (let i = 0; i < sorted.length; i++) {
       const [monthKey, snapshot] = sorted[i];
       const year = monthKey.slice(0, 4);
-      let gainLoss = 0;
-      let gainLossPct = 0;
-      let prevValue = 0;
-      if (i > 0) {
-        prevValue = sorted[i - 1][1].value;
-        gainLoss = snapshot.value - prevValue;
-        gainLossPct = prevValue > 0 ? (gainLoss / prevValue) * 100 : 0;
-      }
+      const prev = i > 0 ? sorted[i - 1][1] : { value: 0, invested: 0 };
+      const { gain: gainLoss, pct: gainLossPct } = periodReturn(prev, snapshot);
       rows.push({ type: 'month', date: snapshot.date, year, value: snapshot.value, gainLoss, gainLossPct });
-      if (!yearTotals.has(year)) yearTotals.set(year, { gainLoss: 0, startValue: i > 0 ? prevValue : snapshot.value, endValue: snapshot.value });
-      else yearTotals.get(year).endValue = snapshot.value;
-      yearTotals.get(year).gainLoss += gainLoss;
+      if (!yearTotals.has(year)) yearTotals.set(year, { start: prev });
+      yearTotals.get(year).end = snapshot;
     }
+    for (const total of yearTotals.values()) Object.assign(total, periodReturn(total.start, total.end));
 
     const result = [];
     let currentYear = null;
@@ -1206,9 +1268,9 @@
         result.push({
           type: 'year',
           year: row.year,
-          value: yt.endValue,
-          gainLoss: yt.gainLoss,
-          gainLossPct: yt.startValue > 0 ? (yt.gainLoss / yt.startValue) * 100 : 0,
+          value: yt.end.value,
+          gainLoss: yt.gain,
+          gainLossPct: yt.pct,
         });
         currentYear = row.year;
       }
@@ -1258,51 +1320,231 @@
     `;
   }
 
-  function clampDateToRange(date) {
-    if (!date) return date;
-    if (state.ttMinDate && date < state.ttMinDate) return state.ttMinDate;
-    if (state.ttMaxDate && date > state.ttMaxDate) return state.ttMaxDate;
-    return date;
+  function graphDates() {
+    return state.latestPortfolioHistoryData?.dates || [];
   }
 
-  function nearestHistoryDate(targetDate) {
-    const dates = state.portfolioHistoryDates;
+  function lastIndexWhere(dates, predicate) {
+    for (let i = dates.length - 1; i >= 0; i--) {
+      if (predicate(dates[i])) return i;
+    }
+    return -1;
+  }
+
+  function graphWindow() {
+    const data = state.latestPortfolioHistoryData;
+    const dates = data?.dates || [];
+    const bounds = getChartWindowBounds(state.selectedChartRange, dates, state.chartRangeOffset);
+    let startIdx = dates.findIndex((d) => d >= bounds.start);
+    if (startIdx === -1) startIdx = 0;
+    let endIdx = lastIndexWhere(dates, (d) => d <= bounds.end);
+    if (endIdx < startIdx) endIdx = startIdx;
+
+    // The period change is measured from the close before the window (YTD
+    // starts from the last close of the previous year). Windows that start
+    // before the first data point measure from zero, like the overview.
+    let baselineIdx = -1;
+    if (!bounds.zeroBaseline) {
+      baselineIdx = bounds.calendar
+        ? lastIndexWhere(dates, (d) => d < bounds.start)
+        : lastIndexWhere(dates, (d) => d <= bounds.start);
+    }
+    const baseline = baselineIdx >= 0
+      ? { date: dates[baselineIdx], value: data.values[baselineIdx] || 0, invested: data.invested[baselineIdx] || 0 }
+      : { date: dates.length ? shiftIsoDate(dates[0], { days: -1 }) : null, value: 0, invested: 0 };
+
+    return {
+      ...bounds,
+      startIdx,
+      endIdx,
+      baseline,
+      hasBaseline: baselineIdx >= 0,
+      canPrev: bounds.shiftable && dates.length > 0 && bounds.start > dates[0],
+      canNext: bounds.shiftable && state.chartRangeOffset < 0,
+    };
+  }
+
+  function graphPeriodChange(idx, win = graphWindow()) {
+    const data = state.latestPortfolioHistoryData;
+    if (!data || idx == null || idx < 0) return null;
+    const value = data.values[idx] ?? 0;
+    const invested = data.invested[idx] ?? 0;
+    const flow = invested - win.baseline.invested;
+    const eur = value - win.baseline.value - flow;
+    const base = win.baseline.value + Math.max(0, flow);
+    return { eur, pct: base > 0 ? (eur / base) * 100 : null };
+  }
+
+  function nearestHistoryDate(targetDate, dates = graphDates()) {
     if (!dates.length || !targetDate) return targetDate;
     if (dates.includes(targetDate)) return targetDate;
     let nearest = dates[0];
-    let best = Math.abs(new Date(nearest) - new Date(targetDate));
+    let best = Math.abs(parseDayMs(nearest) - parseDayMs(targetDate));
     for (const d of dates) {
-      const diff = Math.abs(new Date(d) - new Date(targetDate));
+      const diff = Math.abs(parseDayMs(d) - parseDayMs(targetDate));
       if (diff < best) { nearest = d; best = diff; }
     }
     return nearest;
   }
 
-  function updateHistoryChartSelection() {
-    valuationChart.draw();
+  function windowEndDate(win = graphWindow()) {
+    return graphDates()[win.endIdx] || null;
   }
 
-  function syncHistoryDate(date, source = 'selector') {
-    if (!date) return;
-    const snapped = nearestHistoryDate(clampDateToRange(date));
+  function isDateInWindow(date, win = graphWindow()) {
+    const dates = graphDates();
+    return Boolean(date && dates.length && date >= dates[win.startIdx] && date <= dates[win.endIdx]);
+  }
+
+  function selectGraphDate(date, { immediate = false } = {}) {
+    const dates = graphDates();
+    if (!date || !dates.length) return;
+    const win = graphWindow();
+    const snapped = nearestHistoryDate(date, dates.slice(win.startIdx, win.endIdx + 1));
+    if (snapped === state.selectedHistoryDate && !immediate) return;
     state.selectedHistoryDate = snapped;
-    const input = $('tt-date');
-    if (input && input.value !== snapped) input.value = snapped;
-    loadTimeTravel(snapped);
-    updateHistoryChartSelection(snapped, source === 'selector');
+    renderGraphHeader();
+    renderPeriodPager();
+    valuationChart.draw();
+    scheduleGraphSnapshot(immediate);
   }
 
-  async function loadTimeTravel(date) {
+  function setGraphWindow(rangeKey, offset) {
+    state.selectedChartRange = rangeKey;
+    state.chartRangeOffset = offset;
+    renderChartRangeButtons();
+    valuationChart.hoverIndex = null;
+    selectGraphDate(windowEndDate(), { immediate: true });
+  }
+
+  function shiftGraphPeriod(delta) {
+    const win = graphWindow();
+    if ((delta < 0 && !win.canPrev) || (delta > 0 && !win.canNext)) return;
+    state.chartRangeOffset = Math.min(0, state.chartRangeOffset + delta);
+    valuationChart.hoverIndex = null;
+    selectGraphDate(windowEndDate(), { immediate: true });
+  }
+
+  function jumpToGraphDate(date) {
+    const dates = graphDates();
+    if (!date || !dates.length) return;
+    const target = nearestHistoryDate(date, dates);
+    let offset = 0;
+    while (offset > -5000) {
+      const bounds = getChartWindowBounds(state.selectedChartRange, dates, offset);
+      if (!bounds.shiftable || target > bounds.start || (bounds.calendar && target >= bounds.start)) break;
+      offset -= 1;
+    }
+    state.chartRangeOffset = offset;
+    selectGraphDate(target, { immediate: true });
+  }
+
+  function renderGraphHeader() {
+    const header = $('tt-header-display');
+    const data = state.latestPortfolioHistoryData;
+    const idx = data?.dates?.indexOf(state.selectedHistoryDate) ?? -1;
+    if (idx < 0) {
+      header.innerHTML = '';
+      return;
+    }
+    const win = graphWindow();
+    const value = data.values[idx] ?? 0;
+    const invested = data.invested[idx];
+    const openCost = (data.open_cost || [])[idx];
+    const period = graphPeriodChange(idx, win);
+    const investedPnl = invested != null ? value - invested : null;
+    const investedPct = invested > 0 ? (investedPnl / invested) * 100 : null;
+    const openPnl = openCost != null ? value - openCost : null;
+    const openPct = openCost > 0 ? (openPnl / openCost) * 100 : null;
+
+    header.innerHTML = `
+      <div class="tt-header">
+        <div>
+          <div class="stat-label">Portfolio value</div>
+          <div class="tt-header-value">${formatEur(value)}</div>
+          ${period ? metricChangeHtml(period.eur, period.pct ?? 0, { horizon: win.label }) : ''}
+        </div>
+        <div>
+          <div class="stat-label">Net invested</div>
+          <div class="tt-header-value">${invested != null ? formatEur(invested) : '—'}</div>
+          ${metricChangeHtml(investedPnl, investedPct)}
+        </div>
+        <div>
+          <div class="stat-label">Open positions</div>
+          <div class="tt-header-value">${openCost != null ? formatEur(openCost) : '—'}</div>
+          ${metricChangeHtml(openPnl, openPct)}
+        </div>
+      </div>
+    `;
+  }
+
+  function formatPagerDate(date, withYear = true) {
+    return new Date(`${date}T00:00:00`).toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', ...(withYear ? { year: 'numeric' } : {}),
+    });
+  }
+
+  function renderPeriodPager() {
+    const dates = graphDates();
+    const label = $('tt-period-label');
+    const input = $('tt-date');
+    if (!dates.length || !state.selectedHistoryDate) {
+      label.textContent = '—';
+      return;
+    }
+    const win = graphWindow();
+    const fromDate = win.hasBaseline ? win.baseline.date : dates[win.startIdx];
+    const sameYear = fromDate.slice(0, 4) === state.selectedHistoryDate.slice(0, 4);
+    label.textContent = fromDate === state.selectedHistoryDate
+      ? formatPagerDate(fromDate)
+      : `${formatPagerDate(fromDate, !sameYear)} – ${formatPagerDate(state.selectedHistoryDate)}`;
+    input.min = dates[0];
+    input.max = dates[dates.length - 1];
+    if (input.value !== state.selectedHistoryDate) input.value = state.selectedHistoryDate;
+
+    const periodName = { '1W': 'week', '1M': 'month', YTD: 'year', '1Y': 'year', '3Y': '3 years', '5Y': '5 years' }[state.selectedChartRange] || 'period';
+    const prev = $('tt-prev');
+    const next = $('tt-next');
+    prev.disabled = !win.canPrev;
+    next.disabled = !win.canNext;
+    prev.hidden = !win.shiftable;
+    next.hidden = !win.shiftable;
+    prev.setAttribute('aria-label', `Previous ${periodName}`);
+    next.setAttribute('aria-label', `Next ${periodName}`);
+    prev.title = `Previous ${periodName}`;
+    next.title = `Next ${periodName}`;
+  }
+
+  let graphSnapshotTimer = null;
+  let graphSnapshotToken = 0;
+
+  function scheduleGraphSnapshot(immediate = false) {
+    clearTimeout(graphSnapshotTimer);
+    if (!state.selectedHistoryDate) return;
+    graphSnapshotTimer = setTimeout(() => {
+      const win = graphWindow();
+      loadTimeTravel(state.selectedHistoryDate, win.baseline.date);
+    }, immediate ? 0 : 220);
+  }
+
+  async function loadTimeTravel(date, from) {
     const container = $('tt-content');
-    container.innerHTML = '<div class="muted-empty">Loading snapshot…</div>';
+    const token = ++graphSnapshotToken;
+    if (!container.children.length) container.innerHTML = '<div class="muted-empty">Loading snapshot…</div>';
+    container.classList.add('is-loading');
     try {
-      const extra = `&includeOtherBrokers=${state.includeOtherBrokers ? '1' : '0'}`;
-      const resp = await fetch(`/api/time-travel?date=${encodeURIComponent(date)}${extra}`);
+      const params = new URLSearchParams({ date, includeOtherBrokers: state.includeOtherBrokers ? '1' : '0' });
+      if (from) params.set('from', from);
+      const resp = await fetch(`/api/time-travel?${params}`);
       const data = await resp.json();
+      if (token !== graphSnapshotToken) return;
       renderTimeTravel(data);
     } catch (err) {
+      if (token !== graphSnapshotToken) return;
       container.innerHTML = '<div class="muted-empty">Failed to load snapshot.</div>';
       console.error(err);
+    } finally {
+      if (token === graphSnapshotToken) container.classList.remove('is-loading');
     }
   }
 
@@ -1312,38 +1554,25 @@
 
   function renderTimeTravel(data) {
     const container = $('tt-content');
-    const header = $('tt-header-display');
     if (!data.holdings?.length) {
       container.innerHTML = '<div class="muted-empty">No holdings on this date.</div>';
-      header.innerHTML = '';
       return;
     }
 
-    const fmt = (v) => '€ ' + Math.abs(v).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const sign = (v) => (v > 0 ? '+' : v < 0 ? '-' : '');
-
     const renderRow = (h) => {
       const priceStr = h.price != null ? formatPrice(h.price, h.currency) : '—';
-      let changeHtml = '';
-      if (h.daily_change_eur != null) {
-        const pct = h.daily_change_pct != null ? ` (${sign(h.daily_change_pct)}${Math.abs(h.daily_change_pct).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%)` : '';
-        changeHtml = `<div class="tt-holding-change ${numberClass(h.daily_change_eur)}">${sign(h.daily_change_eur)}${fmt(h.daily_change_eur)}${pct}</div>`;
-      }
-      let ytdHtml = '';
-      if (h.ytd_change_eur != null && h.shares) {
-        const perShare = h.ytd_change_eur / h.shares;
-        const pct = h.ytd_change_pct != null ? ` (${sign(h.ytd_change_pct)}${Math.abs(h.ytd_change_pct).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%)` : '';
-        ytdHtml = `<div class="tt-holding-ytd ${numberClass(h.ytd_change_eur)}">YTD: ${sign(perShare)}${fmt(perShare)}/share${pct}</div>`;
-      }
+      const changeHtml = h.period_change_eur != null
+        ? `<div class="tt-holding-change ${numberClass(h.period_change_eur)}">${formatSignedEur(h.period_change_eur)}${h.period_change_pct != null ? ` <span class="tt-holding-pct">${formatPct(h.period_change_pct)}</span>` : ''}</div>`
+        : '';
       return `
         <div class="tt-holding-row is-clickable" data-perf-key="${h.is_manual ? 'm' : 's'}-${h.id}">
           <div>
             <div class="tt-holding-name">${escapeHtml(h.name)}</div>
-            <div class="tt-holding-meta">${escapeHtml(h.exchange || '')} | ${priceStr} × ${h.shares}</div>
+            <div class="tt-holding-meta">${escapeHtml(h.exchange || '')} · ${priceStr} × ${formatShares(h.shares)}</div>
           </div>
           <div class="tt-holding-right">
-            <div class="tt-holding-value">${h.total_value_eur != null ? fmt(h.total_value_eur) : '—'}</div>
-            ${changeHtml}${ytdHtml}
+            <div class="tt-holding-value">${h.total_value_eur != null ? formatEur(h.total_value_eur) : '—'}</div>
+            ${changeHtml}
           </div>
         </div>
       `;
@@ -1369,35 +1598,6 @@
     const rest = data.holdings.filter((h) => !h.is_manual);
     const stocks = rest.filter((h) => !isTracker(h));
     const trackers = rest.filter(isTracker);
-    const hist = state.latestPortfolioHistoryData;
-    const dateIdx = hist?.dates?.indexOf(data.date) ?? -1;
-    const investedOnDate = dateIdx >= 0 ? hist.invested[dateIdx] : null;
-    const openCostOnDate = dateIdx >= 0 ? (hist.open_cost || [])[dateIdx] : null;
-    const value = data.total_value_eur;
-    const investedPnl = investedOnDate != null ? value - investedOnDate : null;
-    const investedPct = investedOnDate > 0 ? (investedPnl / investedOnDate) * 100 : null;
-    const openPnl = openCostOnDate != null ? value - openCostOnDate : null;
-    const openPct = openCostOnDate > 0 ? (openPnl / openCostOnDate) * 100 : null;
-
-    header.innerHTML = `
-      <div class="tt-header">
-        <div>
-          <div class="stat-label">Portfolio value</div>
-          <div class="tt-header-value">${formatEur(value)}</div>
-          ${metricChangeHtml(data.daily_change_eur, data.daily_change_pct, { horizon: '1d' })}
-        </div>
-        <div>
-          <div class="stat-label">Net invested</div>
-          <div class="tt-header-value">${investedOnDate != null ? formatEur(investedOnDate) : '—'}</div>
-          ${metricChangeHtml(investedPnl, investedPct)}
-        </div>
-        <div>
-          <div class="stat-label">Open positions</div>
-          <div class="tt-header-value">${openCostOnDate != null ? formatEur(openCostOnDate) : '—'}</div>
-          ${metricChangeHtml(openPnl, openPct)}
-        </div>
-      </div>
-    `;
     container.innerHTML = [
       renderSection('Stocks', stocks, 'tt-stocks'),
       renderSection("Trackers (ETF's)", trackers, 'tt-trackers'),
@@ -1411,61 +1611,28 @@
       const data = await resp.json();
       if (!data.dates?.length) return false;
 
+      const previous = state.latestPortfolioHistoryData;
+      const followLatest = !previous
+        || (state.chartRangeOffset === 0 && state.selectedHistoryDate === previous.dates[previous.dates.length - 1]);
       state.portfolioHistoryDates = data.dates;
       state.latestPortfolioHistoryData = data;
       renderPortfolioHistoryTable(data);
 
-      const lastDate = data.dates[data.dates.length - 1];
-      state.selectedHistoryDate = state.selectedHistoryDate || lastDate;
       valuationChart.init();
       renderChartRangeButtons();
       updateScaleButton();
-      valuationChart.draw();
+      const win = graphWindow();
+      const date = followLatest || !data.dates.includes(state.selectedHistoryDate)
+        ? windowEndDate(win)
+        : state.selectedHistoryDate;
+      state.selectedHistoryDate = null;
+      selectGraphDate(date, { immediate: true });
       return true;
     } catch (err) {
       console.error('Failed to load chart', err);
       await checkServerStatus();
       return false;
     }
-  }
-
-  async function initTimeTravel() {
-    try {
-      const resp = await fetch('/api/time-travel/range');
-      const range = await resp.json();
-      state.ttMinDate = range.min_date;
-      state.ttMaxDate = range.max_date;
-      if (!state.ttMinDate || !state.ttMaxDate) return;
-      const input = $('tt-date');
-      input.min = state.ttMinDate;
-      input.max = state.ttMaxDate;
-      input.value = state.ttMaxDate;
-      syncHistoryDate(state.ttMaxDate, 'init');
-    } catch (err) {
-      console.error('Failed to init time travel', err);
-    }
-  }
-
-  function shiftDate(delta) {
-    const current = $('tt-date').value;
-    const dates = state.portfolioHistoryDates;
-    if (!current || !dates.length) return;
-    const idx = dates.indexOf(current);
-    let nextIdx;
-    if (idx === -1) {
-      if (delta > 0) {
-        nextIdx = dates.findIndex((d) => d > current);
-        if (nextIdx === -1) return;
-      } else {
-        nextIdx = dates.slice().reverse().findIndex((d) => d < current);
-        if (nextIdx === -1) return;
-        nextIdx = dates.length - 1 - nextIdx;
-      }
-    } else {
-      nextIdx = idx + delta;
-    }
-    if (nextIdx < 0 || nextIdx >= dates.length) return;
-    syncHistoryDate(dates[nextIdx], 'nav');
   }
 
   async function loadOtherBrokersPanel() {
@@ -1512,13 +1679,8 @@
         loadPortfolioValuationChart(),
         loadHoldings(),
         loadPerformance(),
-        refreshTimeTravel(),
       ]);
     }
-  }
-
-  async function refreshTimeTravel() {
-    if ($('tt-date').value) await loadTimeTravel($('tt-date').value);
   }
 
   async function refreshLivePrices(show = false) {
@@ -2519,15 +2681,12 @@
         loadPortfolioValuationChart(),
         loadHoldings(),
         loadPerformance(),
-        refreshTimeTravel(),
       ]);
     });
     $('chart-range-selector').addEventListener('click', (e) => {
       const btn = e.target.closest('[data-range]');
       if (!btn) return;
-      state.selectedChartRange = btn.dataset.range;
-      renderChartRangeButtons();
-      applyChartRange();
+      setGraphWindow(btn.dataset.range, 0);
     });
     $('lot-range-selector').addEventListener('click', (e) => {
       const btn = e.target.closest('[data-range]');
@@ -2563,9 +2722,12 @@
       updateScaleButton();
       applyChartRange();
     });
-    $('tt-prev').addEventListener('click', () => shiftDate(-1));
-    $('tt-next').addEventListener('click', () => shiftDate(1));
-    $('tt-date').addEventListener('change', () => syncHistoryDate($('tt-date').value, 'selector'));
+    $('tt-prev').addEventListener('click', () => shiftGraphPeriod(-1));
+    $('tt-next').addEventListener('click', () => shiftGraphPeriod(1));
+    $('tt-date').addEventListener('change', () => jumpToGraphDate($('tt-date').value));
+    $('tt-date').addEventListener('click', () => {
+      try { $('tt-date').showPicker?.(); } catch { /* picker opens natively */ }
+    });
     $('tt-content').addEventListener('click', (e) => {
       const holding = e.target.closest('[data-perf-key]');
       if (holding) {
@@ -2687,7 +2849,6 @@
       loadPortfolioValuationChart(),
       loadHoldings(),
       loadPerformance(),
-      initTimeTravel(),
       loadOtherBrokersPanel(),
       loadGmailStatus(),
     ]);

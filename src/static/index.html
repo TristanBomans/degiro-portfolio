@@ -163,12 +163,18 @@
                   <div class="chart-tooltip" id="chart-tooltip" hidden></div>
                 </div>
               </div>
-              <div class="date-nav">
-                <button class="btn btn-outline" id="tt-prev" type="button">Prev</button>
-                <label class="date-field">
-                  <input type="date" id="tt-date">
+              <div class="date-nav period-pager">
+                <button class="btn btn-outline btn-icon" id="tt-prev" type="button" aria-label="Previous period">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg>
+                </button>
+                <label class="period-label" title="Jump to a date">
+                  <span id="tt-period-label">—</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
+                  <input type="date" id="tt-date" aria-label="Jump to date">
                 </label>
-                <button class="btn btn-outline" id="tt-next" type="button">Next</button>
+                <button class="btn btn-outline btn-icon" id="tt-next" type="button" aria-label="Next period">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+                </button>
               </div>
               <div id="tt-content"></div>
             </div>
