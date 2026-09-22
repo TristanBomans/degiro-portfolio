@@ -744,78 +744,108 @@ html.dark .brand-mark {
   padding: 1rem;
 }
 
-.summary-grid {
+.summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.75rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0.6rem 2rem;
 }
 
-.hero-strip {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
-}
-
-.hero-metric {
-  padding: 1rem 1.05rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--card);
-}
-
-.hero-metric .stat-label {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-}
-
-.hero-metric .stat-label-short {
-  display: none;
-}
-
-.stat-sub .stat-pnl + .stat-pct::before {
-  content: " · ";
-}
-
-.hero-metric .stat-value {
-  font-size: 1.45rem;
-}
-
-.stat-card {
-  padding: 0.9rem 0.95rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--muted);
-}
-
-.stat-label {
+.summary-label {
   font-size: 0.6875rem;
   font-weight: 600;
   letter-spacing: 0.03em;
   text-transform: uppercase;
   color: var(--muted-foreground);
-  margin-bottom: 0.35rem;
 }
 
-.stat-value {
-  font-size: 1.25rem;
+.summary-value {
+  margin-top: 0.2rem;
+  font-size: 2rem;
+  font-weight: 650;
+  letter-spacing: -0.045em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-change {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-change-pct {
+  opacity: 0.8;
+}
+
+.summary-horizon {
+  color: var(--muted-foreground);
+  font-weight: 550;
+}
+
+.summary-secondary {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 0 1.75rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.summary-item-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.summary-item-label .legend-swatch {
+  width: 0.8rem;
+}
+
+.summary-item-figures {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-item-value {
+  font-size: 1rem;
   font-weight: 600;
   letter-spacing: -0.03em;
-  font-variant-numeric: tabular-nums;
 }
 
-.stat-sub {
-  margin-top: 0.2rem;
+.summary-item-delta {
   font-size: 0.75rem;
-  font-weight: 550;
-  font-variant-numeric: tabular-nums;
+  font-weight: 600;
 }
 
-.stat-line {
+.summary-note {
+  grid-column: 1 / -1;
   font-size: 0.75rem;
   color: var(--muted-foreground);
-  margin-top: 0.15rem;
 }
 
 .positive {
@@ -965,29 +995,8 @@ html.dark .brand-mark {
   letter-spacing: -0.02em;
 }
 
-.tt-header {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  align-items: start;
-  gap: 1rem;
+#tt-header-display .summary {
   margin-bottom: 0.85rem;
-}
-
-.tt-header-value {
-  font-size: 1.5rem;
-  font-weight: 650;
-  letter-spacing: -0.04em;
-  font-variant-numeric: tabular-nums;
-}
-
-.tt-header .stat-sub {
-  margin-top: 0.18rem;
-}
-
-.stat-horizon {
-  color: var(--muted-foreground);
-  font-weight: 650;
-  margin-right: 0.28rem;
 }
 
 .date-nav {
@@ -1233,10 +1242,24 @@ th.num {
 
 .holdings-head,
 .holding-row {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 8.75rem 8.75rem;
   align-items: center;
   column-gap: 1.5rem;
+}
+
+/* Share of the portfolio, drawn as a hairline along the row. */
+.holding-row::after {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: var(--weight, 0%);
+  height: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary) 50%, transparent);
+  content: "";
+  pointer-events: none;
 }
 
 .holdings-head {
@@ -2671,20 +2694,68 @@ html.dark .dialog {
     padding: 0.65rem 0.75rem;
   }
 
-  .summary-grid,
-  .hero-strip {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .summary {
+    grid-template-columns: minmax(0, 1fr);
     gap: 0;
-    margin-bottom: 0;
   }
 
-  .hero-strip .stat-line {
-    grid-column: 1 / -1;
-    padding: 0.4rem 0.15rem 0;
-    margin: 0;
-    font-size: 0.625rem;
+  .summary-label {
+    font-size: 0.5625rem;
+  }
+
+  .summary-value {
+    margin-top: 0.1rem;
+    font-size: 1.6rem;
+  }
+
+  .summary-change {
+    gap: 0.3rem;
+    margin-top: 0.15rem;
+    font-size: 0.6875rem;
+  }
+
+  .summary-secondary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0;
+    margin-top: 0.65rem;
+    padding-top: 0.55rem;
     border-top: 1px solid var(--border);
-    margin-top: 0.4rem;
+  }
+
+  .summary-item + .summary-item {
+    padding-left: 0.75rem;
+    border-left: 1px solid var(--border);
+  }
+
+  .summary-item {
+    gap: 0.1rem;
+    min-width: 0;
+  }
+
+  .summary-item-label {
+    gap: 0.35rem;
+    font-size: 0.5625rem;
+  }
+
+  .summary-item-label .legend-swatch {
+    width: 0.65rem;
+  }
+
+  .summary-item-value {
+    font-size: 0.8125rem;
+  }
+
+  .summary-item-delta {
+    font-size: 0.625rem;
+  }
+
+  .summary-note {
+    margin-top: 0.5rem;
+    font-size: 0.625rem;
+  }
+
+  #tt-header-display .summary {
+    margin-bottom: 0.6rem;
   }
 
   #view-overview .panel:first-child .panel-header {
@@ -2697,67 +2768,6 @@ html.dark .dialog {
 
   #view-overview .panel-kicker {
     display: none;
-  }
-
-  .hero-metric,
-  .stat-card {
-    padding: 0 0.45rem;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-  }
-
-  .hero-metric + .hero-metric {
-    border-left: 1px solid var(--border);
-  }
-
-  .hero-metric .stat-label-full {
-    display: none;
-  }
-
-  .hero-metric .stat-label-short {
-    display: inline;
-  }
-
-  .hero-metric .legend-swatch {
-    width: 0.7rem;
-  }
-
-  .hero-metric .stat-value {
-    font-size: 0.78rem;
-    letter-spacing: -0.03em;
-    white-space: nowrap;
-  }
-
-  .stat-label {
-    font-size: 0.55rem;
-    margin-bottom: 0.15rem;
-  }
-
-  .stat-sub {
-    font-size: 0.625rem;
-    margin-top: 0.08rem;
-  }
-
-  /* Narrow columns: percentage first, the amount as a quieter second line. */
-  .stat-sub {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    row-gap: 0.05rem;
-  }
-
-  .stat-sub .stat-pnl {
-    order: 3;
-    flex-basis: 100%;
-    font-size: 0.5625rem;
-    font-weight: 550;
-    opacity: 0.72;
-    white-space: nowrap;
-  }
-
-  .stat-sub .stat-pnl + .stat-pct::before {
-    content: none;
   }
 
   .holdings-head {
@@ -2924,22 +2934,6 @@ html.dark .dialog {
   .seg-compact button {
     min-width: 1.6rem;
     height: 1.3rem;
-  }
-
-  .tt-header {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    align-items: start;
-    gap: 0.35rem;
-    margin-bottom: 0.55rem;
-  }
-
-  .tt-header-value {
-    font-size: 0.78rem;
-    white-space: nowrap;
-  }
-
-  .tt-header .stat-sub {
-    font-size: 0.625rem;
   }
 
   .tt-holding-row {

@@ -50,6 +50,35 @@
 
   const $ = (id) => document.getElementById(id);
 
+  // Last successful responses are kept locally so the app opens on the last
+  // known numbers instantly and refreshes them once the server answers.
+  const CACHE_PREFIX = 'pm-cache:';
+
+  function readCache(url) {
+    try {
+      return JSON.parse(localStorage.getItem(CACHE_PREFIX + url));
+    } catch {
+      return null;
+    }
+  }
+
+  function writeCache(url, data) {
+    try {
+      localStorage.setItem(CACHE_PREFIX + url, JSON.stringify(data));
+    } catch { /* storage full or unavailable */ }
+  }
+
+  function clearCache() {
+    Object.keys(localStorage).filter((key) => key.startsWith(CACHE_PREFIX)).forEach((key) => localStorage.removeItem(key));
+  }
+
+  async function fetchJson(url, options) {
+    const resp = await fetch(url, options);
+    const data = await resp.json();
+    if (resp.ok) writeCache(url, data);
+    return data;
+  }
+
   function otherBrokersQueryParam() {
     return `?includeOtherBrokers=${state.includeOtherBrokers ? '1' : '0'}`;
   }
@@ -74,10 +103,78 @@
     return `${prefix}${Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
   }
 
-  function metricChangeHtml(eur, pct, { horizon } = {}) {
-    if (eur == null || pct == null || Number.isNaN(eur) || Number.isNaN(pct)) return '';
-    const horizonHtml = horizon ? `<span class="stat-horizon">${horizon}</span>` : '';
-    return `<div class="stat-sub ${numberClass(eur)}">${horizonHtml}<span class="stat-pnl">${formatSignedEur(eur)}</span><span class="stat-pct">${formatPct(pct)}</span></div>`;
+  // One primary figure with its change, then quieter secondary metrics whose
+  // delta follows the shared %/€ preference (tap them to switch).
+  function summaryHtml({ label, value, change, secondary = [], note = '', animate = false }) {
+    const numAttrs = (key, amount, format) => (animate
+      ? ` data-num="${key}" data-value="${amount}" data-format="${format}"`
+      : '');
+    const changeHtml = change?.eur != null
+      ? `<div class="summary-change ${numberClass(change.eur)}">
+          <span${numAttrs('change', change.eur, 'signedEur')}>${formatSignedEur(change.eur)}</span>
+          ${change.pct != null ? `<span class="summary-change-pct">${formatPct(change.pct)}</span>` : ''}
+          ${change.horizon ? `<span class="summary-horizon">${escapeHtml(change.horizon)}</span>` : ''}
+        </div>`
+      : '';
+    const showEur = state.holdingChangeMode === 'eur';
+    const items = secondary.map((item) => {
+      const delta = showEur ? item.eur : item.pct;
+      const deltaText = delta == null ? '' : (showEur ? formatSignedEur(delta) : formatPct(delta));
+      return `
+        <span class="summary-item">
+          <span class="summary-item-label"><i class="legend-swatch ${item.kind}"></i>${item.label}</span>
+          <span class="summary-item-figures">
+            <span class="summary-item-value">${item.value != null ? formatEur(item.value) : '—'}</span>
+            <span class="summary-item-delta ${numberClass(delta)}">${deltaText}</span>
+          </span>
+        </span>`;
+    }).join('');
+    return `
+      <div class="summary">
+        <div class="summary-main">
+          <div class="summary-label">${label}</div>
+          <div class="summary-value"${numAttrs('value', value, 'eur')}>${formatEur(value)}</div>
+          ${changeHtml}
+        </div>
+        ${items ? `<button class="summary-secondary" type="button" data-toggle-change-mode title="Show gains in ${showEur ? 'percent' : 'euro'}">${items}</button>` : ''}
+        ${note ? `<div class="summary-note">${escapeHtml(note)}</div>` : ''}
+      </div>`;
+  }
+
+  const shownNumbers = new Map();
+
+  // Numbers that changed since the last render roll to their new value.
+  function animateNumbers(root) {
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    root.querySelectorAll('[data-num]').forEach((el) => {
+      const key = el.dataset.num;
+      const to = Number(el.dataset.value);
+      const from = shownNumbers.get(key);
+      shownNumbers.set(key, to);
+      if (reduce || from == null || !Number.isFinite(to) || Math.abs(from - to) < 0.005) return;
+      const format = el.dataset.format === 'signedEur' ? formatSignedEur : formatEur;
+      const start = performance.now();
+      const duration = 650;
+      const step = (now) => {
+        if (!el.isConnected) return;
+        const t = Math.min(1, (now - start) / duration);
+        const eased = 1 - (1 - t) ** 3;
+        el.textContent = format(from + (to - from) * eased);
+        if (t < 1) requestAnimationFrame(step);
+      };
+      el.textContent = format(from);
+      requestAnimationFrame(step);
+    });
+  }
+
+  function setChangeMode(mode) {
+    if (mode === state.holdingChangeMode) return;
+    state.holdingChangeMode = mode;
+    localStorage.setItem('holdingChangeMode', mode);
+    renderHoldingChangeMode();
+    renderHoldings();
+    if (state.latestPortfolioSummary) renderSummary(state.latestPortfolioSummary);
+    renderGraphHeader();
   }
 
   function holdingsDayChange() {
@@ -1049,9 +1146,8 @@
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
-      const resp = await fetch('/api/exchange-rates', { signal: controller.signal });
+      const data = await fetchJson('/api/exchange-rates', { signal: controller.signal });
       clearTimeout(timeout);
-      const data = await resp.json();
       if (data?.rates) state.exchangeRates = { ...state.exchangeRates, ...data.rates };
     } catch (err) {
       console.error('Failed to load exchange rates', err);
@@ -1061,39 +1157,32 @@
   function renderSummary(summary) {
     if (!summary) return;
     const latestPrice = latestPriceMoment();
-    const notes = [
+    const note = [
       priceFreshnessLabel(latestPrice),
       summary.other_brokers_count > 0 ? `Includes ${summary.other_brokers_count} other-broker positions` : '',
-    ].filter(Boolean);
-    const brokerNote = notes.length ? `<div class="stat-line">${notes.map(escapeHtml).join(' · ')}</div>` : '';
+    ].filter(Boolean).join(' · ');
     const dayChange = holdingsDayChange();
-    const day = dayChange
-      ? metricChangeHtml(dayChange.eur, dayChange.pct, { horizon: dayChangeHorizon(latestPrice) })
-      : '';
-    $('overview-hero').innerHTML = `
-      <div class="hero-metric">
-        <div class="stat-label"><i class="legend-swatch value"></i><span class="stat-label-full">Live portfolio value</span><span class="stat-label-short">Value</span></div>
-        <div class="stat-value">${formatEur(summary.current_value)}</div>
-        ${day}
-      </div>
-      <div class="hero-metric">
-        <div class="stat-label"><i class="legend-swatch invested"></i><span class="stat-label-full">Net invested</span><span class="stat-label-short">Invested</span></div>
-        <div class="stat-value">${formatEur(summary.net_invested)}</div>
-        ${metricChangeHtml(summary.gain_loss, summary.gain_loss_percent)}
-      </div>
-      <div class="hero-metric">
-        <div class="stat-label"><i class="legend-swatch open"></i><span class="stat-label-full">Open positions</span><span class="stat-label-short">Open</span></div>
-        <div class="stat-value">${formatEur(summary.open_cost)}</div>
-        ${metricChangeHtml(summary.open_gain_loss, summary.open_gain_loss_percent)}
-      </div>
-      ${brokerNote}
-    `;
+    const horizon = dayChangeHorizon(latestPrice);
+    const hero = $('overview-hero');
+    hero.innerHTML = summaryHtml({
+      label: 'Portfolio value',
+      value: summary.current_value,
+      change: dayChange ? { ...dayChange, horizon: horizon === '1d' ? 'today' : horizon } : null,
+      secondary: [
+        { kind: 'invested', label: 'Invested', value: summary.net_invested, eur: summary.gain_loss, pct: summary.gain_loss_percent },
+        { kind: 'open', label: 'Open', value: summary.open_cost, eur: summary.open_gain_loss, pct: summary.open_gain_loss_percent },
+      ],
+      note,
+      animate: true,
+    });
+    animateNumbers(hero);
   }
 
-  async function loadPortfolioSummary() {
+  async function loadPortfolioSummary({ fromCache = false } = {}) {
     try {
-      const resp = await fetch(`/api/portfolio-summary${otherBrokersQueryParam()}`);
-      const summary = await resp.json();
+      const url = `/api/portfolio-summary${otherBrokersQueryParam()}`;
+      const summary = fromCache ? readCache(url) : await fetchJson(url);
+      if (!summary) return null;
       state.latestPortfolioSummary = summary;
       renderSummary(summary);
       return summary;
@@ -1124,6 +1213,7 @@
       const valueEur = stock.latest_price != null ? stock.shares * stock.latest_price * rate : null;
       return { stock, valueEur };
     }).sort((a, b) => (b.valueEur || 0) - (a.valueEur || 0));
+    const totalValue = rows.reduce((sum, row) => sum + (row.valueEur || 0), 0);
 
     list.innerHTML = `
       <div class="holdings-list">
@@ -1141,8 +1231,10 @@
           const change = stock.price_change_pct != null
             ? `<span class="price-change ${numberClass(stock.price_change_pct)}">${stock.price_change_pct >= 0 ? '▲' : '▼'} ${changeText}</span>`
             : '';
+          const weight = totalValue > 0 && valueEur != null ? (valueEur / totalValue) * 100 : 0;
+          const key = `${stock.is_manual ? 'm' : 's'}-${stock.id}`;
           return `
-            <div class="holding-row is-clickable" data-perf-key="${stock.is_manual ? 'm' : 's'}-${stock.id}">
+            <div class="holding-row is-clickable" data-perf-key="${key}" style="--weight: ${weight.toFixed(2)}%" title="${weight.toFixed(1)}% of portfolio">
               <div class="holding-info">
                 <div class="holding-name">${escapeHtml(stock.name)}</div>
                 <div class="holding-meta">${escapeHtml(ticker)}${stock.exchange ? ` · ${escapeHtml(stock.exchange)}` : ''}<span class="holding-meta-extra">${change ? ` · ${change}` : ''} · ${stock.shares} sh</span></div>
@@ -1152,7 +1244,7 @@
                 ${change}
               </div>
               <div class="holding-value">
-                <div class="value-main">${valueEur != null ? formatEur(valueEur) : '—'}</div>
+                <div class="value-main"${valueEur != null ? ` data-num="holding-${key}" data-value="${valueEur}" data-format="eur"` : ''}>${valueEur != null ? formatEur(valueEur) : '—'}</div>
                 <span class="holding-shares">${stock.shares} shares</span>
               </div>
             </div>
@@ -1160,15 +1252,21 @@
         }).join('')}
       </div>
     `;
+    animateNumbers(list);
   }
 
-  async function loadHoldings() {
+  async function loadHoldings({ fromCache = false } = {}) {
     try {
-      const [, holdingsResp] = await Promise.all([
-        fetchExchangeRates(),
-        fetch(`/api/holdings${otherBrokersQueryParam()}`),
-      ]);
-      const data = await holdingsResp.json();
+      const url = `/api/holdings${otherBrokersQueryParam()}`;
+      let data;
+      if (fromCache) {
+        data = readCache(url);
+        const rates = readCache('/api/exchange-rates');
+        if (rates?.rates) state.exchangeRates = { ...state.exchangeRates, ...rates.rates };
+        if (!data) return;
+      } else {
+        [, data] = await Promise.all([fetchExchangeRates(), fetchJson(url)]);
+      }
       state.holdings = data.holdings || [];
       renderHoldings();
       if (state.latestPortfolioSummary) renderSummary(state.latestPortfolioSummary);
@@ -1510,25 +1608,15 @@
     const openPnl = openCost != null ? value - openCost : null;
     const openPct = openCost > 0 ? (openPnl / openCost) * 100 : null;
 
-    header.innerHTML = `
-      <div class="tt-header">
-        <div>
-          <div class="stat-label">Portfolio value</div>
-          <div class="tt-header-value">${formatEur(value)}</div>
-          ${period ? metricChangeHtml(period.eur, period.pct ?? 0, { horizon: win.label }) : ''}
-        </div>
-        <div>
-          <div class="stat-label">Net invested</div>
-          <div class="tt-header-value">${invested != null ? formatEur(invested) : '—'}</div>
-          ${metricChangeHtml(investedPnl, investedPct)}
-        </div>
-        <div>
-          <div class="stat-label">Open positions</div>
-          <div class="tt-header-value">${openCost != null ? formatEur(openCost) : '—'}</div>
-          ${metricChangeHtml(openPnl, openPct)}
-        </div>
-      </div>
-    `;
+    header.innerHTML = summaryHtml({
+      label: 'Portfolio value',
+      value,
+      change: period ? { ...period, horizon: win.label } : null,
+      secondary: [
+        { kind: 'invested', label: 'Invested', value: invested, eur: investedPnl, pct: investedPct },
+        { kind: 'open', label: 'Open', value: openCost, eur: openPnl, pct: openPct },
+      ],
+    });
   }
 
   function formatPagerDate(date, withYear = true) {
@@ -1658,11 +1746,11 @@
     ].join('');
   }
 
-  async function loadPortfolioValuationChart() {
+  async function loadPortfolioValuationChart({ fromCache = false } = {}) {
     try {
-      const resp = await fetch(`/api/portfolio-valuation-history${otherBrokersQueryParam()}`);
-      const data = await resp.json();
-      if (!data.dates?.length) return false;
+      const url = `/api/portfolio-valuation-history${otherBrokersQueryParam()}`;
+      const data = fromCache ? readCache(url) : await fetchJson(url);
+      if (!data?.dates?.length) return false;
 
       const previous = state.latestPortfolioHistoryData;
       const followLatest = !previous
@@ -2173,6 +2261,7 @@
       const resp = await fetch('/api/purge-database', { method: 'POST' });
       const result = await resp.json();
       if (result.success) {
+        clearCache();
         showToast('Database purged — reloading…', true);
         setTimeout(() => window.location.reload(), 1200);
       } else {
@@ -2613,10 +2702,11 @@
     if (state.perfOverlayOpen) requestAnimationFrame(() => lotChart.draw());
   }
 
-  async function loadPerformance() {
+  async function loadPerformance({ fromCache = false } = {}) {
     try {
-      const resp = await fetch(`/api/performance${otherBrokersQueryParam()}`);
-      const data = await resp.json();
+      const url = `/api/performance${otherBrokersQueryParam()}`;
+      const data = fromCache ? readCache(url) : await fetchJson(url);
+      if (!data) return;
       state.performanceHoldings = data.holdings || [];
       if (state.selectedLotId && !findLot(state.selectedLotId)) state.selectedLotId = null;
       if (state.selectedHoldingKey && !state.performanceHoldings.some((h) => h.key === state.selectedHoldingKey)) {
@@ -2826,11 +2916,10 @@
     });
     $('holding-change-mode').addEventListener('click', (e) => {
       const btn = e.target.closest('[data-mode]');
-      if (!btn || btn.dataset.mode === state.holdingChangeMode) return;
-      state.holdingChangeMode = btn.dataset.mode;
-      localStorage.setItem('holdingChangeMode', state.holdingChangeMode);
-      renderHoldingChangeMode();
-      renderHoldings();
+      if (btn) setChangeMode(btn.dataset.mode);
+    });
+    document.addEventListener('click', (e) => {
+      if (e.target.closest('[data-toggle-change-mode]')) setChangeMode(state.holdingChangeMode === 'eur' ? 'pct' : 'eur');
     });
     $('holdings-list').addEventListener('click', (e) => {
       const row = e.target.closest('[data-perf-key]');
@@ -2895,6 +2984,20 @@
     renderLotRangeButtons();
     setInterval(checkServerStatus, 5000);
 
+    initIncludeOtherBrokers();
+    const [cachedSummary, cachedChart] = await Promise.all([
+      loadPortfolioSummary({ fromCache: true }),
+      loadPortfolioValuationChart({ fromCache: true }),
+      loadHoldings({ fromCache: true }),
+      loadPerformance({ fromCache: true }),
+    ]);
+    const hydrated = Boolean(cachedSummary || cachedChart);
+    if (hydrated) {
+      state.hasData = true;
+      updateEmptyState();
+      setLoading('', false);
+    }
+
     const online = await checkServerStatus();
     if (!online) {
       setLoading('', false);
@@ -2904,7 +3007,7 @@
     await fetchServerConfig();
     initIncludeOtherBrokers();
     await loadUserPreferences();
-    setLoading('Loading holdings, summary, and history…', true);
+    if (!hydrated) setLoading('Loading holdings, summary, and history…', true);
 
     const [summary, chartOk] = await Promise.all([
       loadPortfolioSummary(),
