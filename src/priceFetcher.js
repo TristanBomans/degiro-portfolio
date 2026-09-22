@@ -128,7 +128,11 @@ async function fetchManualHoldingPrices(manualHolding) {
 function persistManualLivePriceSnapshot(db, manualHolding, quote) {
   if (!quote || quote.price == null) return null;
 
-  const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const timestamp = quote.timestamp || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const existing = db.prepare(
+    'SELECT id FROM manual_holding_prices WHERE manual_holding_id = ? AND date = ?'
+  ).get(manualHolding.id, timestamp);
+  if (existing) return timestamp;
   db.prepare(`
     INSERT INTO manual_holding_prices (manual_holding_id, date, open, high, low, close, volume, currency)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -348,6 +352,18 @@ async function fetchIndexPrices(symbol, indexId, period = '5y') {
 /**
  * Fetch a live quote for a single ticker.
  */
+// Snapshots are stamped with the time the price traded, not when it was
+// fetched: a Saturday fetch returns Friday's close and must count as Friday,
+// otherwise the day change compares Friday with itself.
+function marketTimestamp(regularMarketTime) {
+  let ms = NaN;
+  if (regularMarketTime instanceof Date) ms = regularMarketTime.getTime();
+  else if (typeof regularMarketTime === 'number') ms = regularMarketTime < 1e11 ? regularMarketTime * 1000 : regularMarketTime;
+  const now = Date.now();
+  if (!Number.isFinite(ms) || ms > now + 5 * 60 * 1000) ms = now;
+  return new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
 async function fetchLiveQuote(ticker) {
   await rateLimitWait();
   try {
@@ -362,7 +378,7 @@ async function fetchLiveQuote(ticker) {
       high: quote.regularMarketDayHigh,
       low: quote.regularMarketDayLow,
       volume: quote.regularMarketVolume,
-      timestamp: quote.regularMarketTime ? new Date(quote.regularMarketTime * 1000).toISOString() : new Date().toISOString(),
+      timestamp: marketTimestamp(quote.regularMarketTime),
       currency: quote.currency,
     };
   } catch (err) {

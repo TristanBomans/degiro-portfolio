@@ -45,6 +45,7 @@
     livePricesInterval: null,
     hasData: false,
     serverWasOffline: false,
+    holdingChangeMode: localStorage.getItem('holdingChangeMode') === 'eur' ? 'eur' : 'pct',
   };
 
   const $ = (id) => document.getElementById(id);
@@ -98,6 +99,43 @@
     if (!hasChange || previous <= 0) return null;
     const eur = current - previous;
     return { eur, pct: (eur / previous) * 100 };
+  }
+
+  function latestPriceMoment() {
+    let latest = null;
+    for (const stock of state.holdings) {
+      const raw = String(stock.price_date || '');
+      if (!/^\d{4}-\d{2}-\d{2}/.test(raw)) continue;
+      const moment = { day: raw.slice(0, 10), ms: raw.includes('T') ? Date.parse(raw) : null };
+      if (!latest || moment.day > latest.day || (moment.day === latest.day && (moment.ms || 0) > (latest.ms || 0))) {
+        latest = moment;
+      }
+    }
+    return latest;
+  }
+
+  // Price days are UTC market days. When the latest prices are from an
+  // earlier session (weekend, before the open) name that day instead of "1d".
+  function dayChangeHorizon(latest = latestPriceMoment()) {
+    if (!latest || latest.day === new Date().toISOString().slice(0, 10)) return '1d';
+    return new Date(`${latest.day}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
+  }
+
+  function priceFreshnessLabel(latest = latestPriceMoment()) {
+    if (!latest) return '';
+    if (latest.ms == null) return `Prices ${formatDay(latest.day)}`;
+    const at = new Date(latest.ms);
+    const time = at.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    const sameDay = at.toDateString() === new Date().toDateString();
+    const ageDays = (Date.now() - latest.ms) / 86400000;
+    if (sameDay) return `Prices ${time}`;
+    if (ageDays < 6) return `Prices ${at.toLocaleDateString('en-US', { weekday: 'short' })} ${time}`;
+    return `Prices ${at.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${time}`;
+  }
+
+  function holdingDayChangeEur(stock, valueEur) {
+    if (valueEur == null || stock.price_change_pct == null) return null;
+    return valueEur - valueEur / (1 + stock.price_change_pct / 100);
   }
 
   function formatShares(n) {
@@ -1022,12 +1060,15 @@
 
   function renderSummary(summary) {
     if (!summary) return;
-    const brokerNote = summary.other_brokers_count > 0
-      ? `<div class="stat-line">Includes ${summary.other_brokers_count} other-broker positions</div>`
-      : '';
+    const latestPrice = latestPriceMoment();
+    const notes = [
+      priceFreshnessLabel(latestPrice),
+      summary.other_brokers_count > 0 ? `Includes ${summary.other_brokers_count} other-broker positions` : '',
+    ].filter(Boolean);
+    const brokerNote = notes.length ? `<div class="stat-line">${notes.map(escapeHtml).join(' · ')}</div>` : '';
     const dayChange = holdingsDayChange();
     const day = dayChange
-      ? metricChangeHtml(dayChange.eur, dayChange.pct, { horizon: '1d' })
+      ? metricChangeHtml(dayChange.eur, dayChange.pct, { horizon: dayChangeHorizon(latestPrice) })
       : '';
     $('overview-hero').innerHTML = `
       <div class="hero-metric">
@@ -1063,6 +1104,14 @@
     }
   }
 
+  function renderHoldingChangeMode() {
+    document.querySelectorAll('#holding-change-mode [data-mode]').forEach((btn) => {
+      const active = btn.dataset.mode === state.holdingChangeMode;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', String(active));
+    });
+  }
+
   function renderHoldings() {
     const list = $('holdings-list');
     if (!state.holdings.length) {
@@ -1085,8 +1134,12 @@
         </div>
         ${rows.map(({ stock, valueEur }) => {
           const ticker = stock.yahoo_ticker || stock.symbol || '';
+          const changeEur = holdingDayChangeEur(stock, valueEur);
+          const changeText = state.holdingChangeMode === 'eur' && changeEur != null
+            ? formatEur(changeEur)
+            : `${Math.abs(stock.price_change_pct ?? 0).toFixed(2)}%`;
           const change = stock.price_change_pct != null
-            ? `<span class="price-change ${numberClass(stock.price_change_pct)}">${stock.price_change_pct >= 0 ? '▲' : '▼'} ${Math.abs(stock.price_change_pct).toFixed(2)}%</span>`
+            ? `<span class="price-change ${numberClass(stock.price_change_pct)}">${stock.price_change_pct >= 0 ? '▲' : '▼'} ${changeText}</span>`
             : '';
           return `
             <div class="holding-row is-clickable" data-perf-key="${stock.is_manual ? 'm' : 's'}-${stock.id}">
@@ -2771,6 +2824,14 @@
       if (!btn) return;
       openConfirm('Delete holding', 'Remove this other-broker holding?', 'Delete', () => deleteManualHolding(btn.dataset.deleteHolding));
     });
+    $('holding-change-mode').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-mode]');
+      if (!btn || btn.dataset.mode === state.holdingChangeMode) return;
+      state.holdingChangeMode = btn.dataset.mode;
+      localStorage.setItem('holdingChangeMode', state.holdingChangeMode);
+      renderHoldingChangeMode();
+      renderHoldings();
+    });
     $('holdings-list').addEventListener('click', (e) => {
       const row = e.target.closest('[data-perf-key]');
       if (!row) return;
@@ -2830,6 +2891,7 @@
     initTheme();
     bindEvents();
     bindTouchFeedback();
+    renderHoldingChangeMode();
     renderLotRangeButtons();
     setInterval(checkServerStatus, 5000);
 
