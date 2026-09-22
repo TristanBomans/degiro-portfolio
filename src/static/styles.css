@@ -991,19 +991,83 @@ html.dark .brand-mark {
   margin: 0.75rem 0 1rem;
 }
 
-.date-field {
+.period-pager .btn-icon[hidden] {
+  display: inline-flex;
+  visibility: hidden;
+}
+
+.period-pager .btn:disabled {
+  opacity: 0.35;
+}
+
+.period-label {
   position: relative;
   display: inline-flex;
   align-items: center;
-}
-
-.date-field input[type="date"] {
+  justify-content: center;
+  gap: 0.45rem;
+  min-width: 13rem;
   height: 2rem;
-  padding: 0 0.7rem;
+  padding: 0 0.75rem;
   border: 1px solid var(--input);
   border-radius: var(--control-radius);
   background: var(--popover);
   color: var(--foreground);
+  font-size: 0.8125rem;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.period-label:hover {
+  background: color-mix(in srgb, var(--accent) 50%, var(--popover));
+}
+
+.period-label:focus-within {
+  box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--ring);
+}
+
+.period-label svg {
+  width: 0.85rem;
+  height: 0.85rem;
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+
+/* The native date input stays tappable over the label so mobile browsers
+   open their own picker; desktop opens it through showPicker(). */
+.period-label input[type="date"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.period-label input[type="date"]::-webkit-calendar-picker-indicator {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  cursor: pointer;
+}
+
+#tt-content {
+  transition: opacity 140ms ease;
+}
+
+#tt-content.is-loading {
+  opacity: 0.62;
+}
+
+.chart-canvas-wrap #valuation-canvas {
+  touch-action: pan-y;
 }
 
 .tt-section {
@@ -1065,21 +1129,24 @@ html.dark .brand-mark {
   margin-top: 0.12rem;
 }
 
-.tt-holding-change,
-.tt-holding-ytd {
+.tt-holding-change {
   font-size: 0.75rem;
   color: var(--muted-foreground);
   margin-top: 0.12rem;
+  font-variant-numeric: tabular-nums;
 }
 
-.tt-holding-change.positive,
-.tt-holding-ytd.positive {
+.tt-holding-change.positive {
   color: color-mix(in srgb, var(--success-foreground) 78%, var(--muted-foreground));
 }
 
-.tt-holding-change.negative,
-.tt-holding-ytd.negative {
+.tt-holding-change.negative {
   color: color-mix(in srgb, var(--error-foreground) 78%, var(--muted-foreground));
+}
+
+.tt-holding-pct {
+  margin-left: 0.2rem;
+  font-weight: 650;
 }
 
 .tt-holding-right {
@@ -2665,8 +2732,21 @@ html.dark .dialog {
     margin-top: 0.08rem;
   }
 
+  /* Narrow columns: percentage first, the amount as a quieter second line. */
+  .stat-sub {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    row-gap: 0.05rem;
+  }
+
   .stat-sub .stat-pnl {
-    display: none;
+    order: 3;
+    flex-basis: 100%;
+    font-size: 0.5625rem;
+    font-weight: 550;
+    opacity: 0.72;
+    white-space: nowrap;
   }
 
   .stat-sub .stat-pnl + .stat-pct::before {
@@ -2800,15 +2880,19 @@ html.dark .dialog {
 
   #view-graph .date-nav {
     display: grid;
-    grid-template-columns: 1fr 1.7fr 1fr;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     gap: 0.35rem;
-    margin: 0.45rem 0.4rem 0.7rem;
+    margin: 0.45rem 0.75rem 0.7rem;
   }
 
-  #view-graph .date-nav .btn,
-  #view-graph .date-field,
-  #view-graph .date-field input {
-    width: 100%;
+  #view-graph .period-label {
+    min-width: 0;
+    font-size: 0.6875rem;
+  }
+
+  #view-graph .period-label span {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .chart-canvas-wrap {

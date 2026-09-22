@@ -122,6 +122,33 @@ function getRateOnDate(currency, date, globalRates, historicalRates) {
 
 const fallbacks = { USD: 0.85, SEK: 0.093, GBP: 1.18 };
 
+// Stored daily EUR rates win; before the first stored rate for a currency, use
+// the most recent DEGIRO fill rate of that stock (foreign currency per EUR).
+function buildStockRateResolver(transactions, globalRates, historicalRates) {
+  const degiroRatesByStock = {};
+  for (const t of transactions) {
+    if (!(t.exchange_rate > 0) || !t.currency || t.currency === 'EUR') continue;
+    (degiroRatesByStock[t.stock_id] = degiroRatesByStock[t.stock_id] || [])
+      .push([(t.date || '').split('T')[0], t.exchange_rate]);
+  }
+  for (const arr of Object.values(degiroRatesByStock)) arr.sort((a, b) => a[0].localeCompare(b[0]));
+
+  return (stockId, currency, date) => {
+    if (!currency || currency === 'EUR') return 1.0;
+    const stored = historicalRates[currency];
+    if (stored?.length && stored[0][0] <= date) {
+      return getRateOnDate(currency, date, globalRates, historicalRates);
+    }
+    let degiroRate = null;
+    for (const [d, r] of degiroRatesByStock[stockId] || []) {
+      if (d <= date) degiroRate = r;
+      else break;
+    }
+    if (degiroRate) return 1 / degiroRate;
+    return getRateOnDate(currency, date, globalRates, historicalRates);
+  };
+}
+
 function getManualHoldings(db) {
   return db.prepare('SELECT * FROM manual_holdings ORDER BY display_name').all();
 }
@@ -1310,12 +1337,13 @@ app.get('/api/portfolio-summary', (req, res) => {
     totalNetInvested += t.quantity > 0 ? Math.abs(t.total_eur) : -Math.abs(t.total_eur);
   }
 
+  // Open cost is the FIFO cost of the shares still held, the same basis the
+  // Performance view uses, so open P/L equals the sum of open position gains.
   let openCost = 0;
   for (const h of holdings) {
-    const trans = db.prepare('SELECT quantity, total_eur FROM transactions WHERE stock_id = ?').all(h.id);
-    const buys = trans.filter((t) => t.quantity > 0).reduce((s, t) => s + Math.abs(t.total_eur), 0);
-    const sells = trans.filter((t) => t.quantity < 0).reduce((s, t) => s + Math.abs(t.total_eur), 0);
-    openCost += buys - sells;
+    const trans = db.prepare('SELECT * FROM transactions WHERE stock_id = ?').all(h.id);
+    const { remaining } = splitLotsFromTransactions(trans);
+    openCost += remaining.reduce((s, lot) => s + (lot.cost_eur || 0), 0);
   }
 
   let currentValue = 0;
@@ -1468,50 +1496,17 @@ app.get('/api/portfolio-valuation-history', (req, res) => {
     }
   }
 
-  // DEGIRO exchange rate helpers
-  const transByStock = {};
-  for (const t of allTransactions) {
-    (transByStock[t.stock_id] = transByStock[t.stock_id] || []).push(t);
-  }
+  const { globalRates, historicalRates } = loadExchangeRates(db);
+  const stockPriceToEur = buildStockRateResolver(allTransactions, globalRates, historicalRates);
 
-  const exchangeRatesByStock = {};
-  for (const [sid, trans] of Object.entries(transByStock)) {
-    for (let i = trans.length - 1; i >= 0; i--) {
-      if (trans[i].exchange_rate) { exchangeRatesByStock[sid] = trans[i].exchange_rate; break; }
-    }
-  }
-
-  const rateRows = db.prepare('SELECT * FROM exchange_rates').all();
-  const globalExchangeRates = { EUR: 1.0 };
-  for (const r of rateRows) globalExchangeRates[r.from_currency] = r.rate;
-  const fallbackRates = { USD: 0.85, SEK: 0.093, GBP: 1.18 };
-
-  const historicalRates = {};
-  for (const r of rateRows) {
-    if (!historicalRates[r.from_currency]) historicalRates[r.from_currency] = [];
-    historicalRates[r.from_currency].push([r.date.split('T')[0], r.rate]);
-  }
-  for (const arr of Object.values(historicalRates)) arr.sort((a, b) => a[0].localeCompare(b[0]));
-
-  function getRateOnDateLocal(currency, date) {
-    if (currency === 'EUR') return 1.0;
-    const arr = historicalRates[currency];
-    if (!arr || arr.length === 0) return globalExchangeRates[currency] ?? fallbackRates[currency] ?? 1.0;
-    let rate = arr[0][1];
-    for (const [d, r] of arr) {
-      if (d <= date) rate = r;
-      else break;
-    }
-    return rate;
-  }
-
-  // Build DEGIRO events
-  const events = allTransactions.map((t) => ({
+  const events = sortTransactions(allTransactions).map((t) => ({
     date: t.date?.split('T')[0] || t.date,
     stockId: t.stock_id,
     qty: t.quantity,
+    buyCost: Math.abs(Number(t.total_eur) || 0)
+      || Math.abs(Number(t.value_eur) || 0) + Math.abs(Number(t.fees_eur) || 0),
     invested: t.quantity > 0 ? Math.abs(t.total_eur) : -Math.abs(t.total_eur),
-  })).sort((a, b) => a.date.localeCompare(b.date));
+  }));
 
   const dates = [];
   const investedSeries = [];
@@ -1519,7 +1514,7 @@ app.get('/api/portfolio-valuation-history', (req, res) => {
   const valueSeries = [];
   let runningInvested = 0;
   const runningHoldings = {};
-  const runningNetByStock = {};
+  const runningLotsByStock = {};
   let eventIdx = 0;
 
   for (const priceDate of priceDates) {
@@ -1527,7 +1522,20 @@ app.get('/api/portfolio-valuation-history', (req, res) => {
       const e = events[eventIdx];
       runningHoldings[e.stockId] = (runningHoldings[e.stockId] || 0) + e.qty;
       runningInvested += e.invested;
-      runningNetByStock[e.stockId] = (runningNetByStock[e.stockId] || 0) + e.invested;
+      const lots = (runningLotsByStock[e.stockId] = runningLotsByStock[e.stockId] || []);
+      if (e.qty > 0) {
+        lots.push({ qty: e.qty, cost: e.buyCost });
+      } else if (e.qty < 0) {
+        let left = Math.abs(e.qty);
+        for (const lot of lots) {
+          if (left <= 0) break;
+          if (lot.qty <= 0) continue;
+          const take = Math.min(lot.qty, left);
+          lot.cost -= lot.cost * (take / lot.qty);
+          lot.qty -= take;
+          left -= take;
+        }
+      }
       eventIdx++;
     }
 
@@ -1549,22 +1557,7 @@ app.get('/api/portfolio-valuation-history', (req, res) => {
       }
       if (priceClose == null) continue;
 
-      let priceEur = priceClose;
-      if (priceCurrency && priceCurrency !== 'EUR') {
-        let exchangeRate = null;
-        for (const td of Object.keys(exchangeRatesByStock).sort().reverse()) {
-          if (td <= priceDate && exchangeRatesByStock[td]) {
-            exchangeRate = exchangeRatesByStock[td];
-            break;
-          }
-        }
-        if (exchangeRate) {
-          priceEur = priceClose / exchangeRate;
-        } else {
-          priceEur = priceClose * getRateOnDateLocal(priceCurrency, priceDate);
-        }
-      }
-      totalValueEur += holdings * priceEur;
+      totalValueEur += holdings * priceClose * stockPriceToEur(sid, priceCurrency, priceDate);
     }
 
     // Manual holdings value and invested
@@ -1586,18 +1579,20 @@ app.get('/api/portfolio-valuation-history', (req, res) => {
       }
       if (priceClose == null) continue;
 
-      let priceEur = priceClose;
-      if (priceCurrency && priceCurrency !== 'EUR') {
-        priceEur = priceClose * getRateOnDateLocal(priceCurrency, priceDate);
-      }
-      totalValueEur += m.quantity * priceEur;
+      const rate = priceCurrency && priceCurrency !== 'EUR'
+        ? getRateOnDate(priceCurrency, priceDate, globalRates, historicalRates)
+        : 1.0;
+      totalValueEur += m.quantity * priceClose * rate;
     }
 
     dates.push(priceDate);
     investedSeries.push(Math.round((runningInvested + manualInvested) * 100) / 100);
     let openCost = 0;
     for (const [sid, qty] of Object.entries(runningHoldings)) {
-      if (qty > 0) openCost += runningNetByStock[sid] || 0;
+      if (qty <= 1e-8) continue;
+      for (const lot of runningLotsByStock[sid] || []) {
+        if (lot.qty > 1e-8) openCost += lot.cost;
+      }
     }
     openCostSeries.push(Math.round((openCost + manualInvested) * 100) / 100);
     valueSeries.push(Math.round(totalValueEur * 100) / 100);
@@ -2065,13 +2060,18 @@ app.get('/api/performance', (req, res) => {
   if (includeManual) {
     for (const manual of enrichManualHoldings(db)) {
       const date = (manual.purchase_date || '').split('T')[0] || null;
+      const rate = (manual.total_value_eur != null && manual.latest_price && manual.shares)
+        ? (manual.total_value_eur / (manual.latest_price * manual.shares))
+        : 1;
+      // Manual holdings only store a EUR cost basis; express the buy price in
+      // the quote currency so it is comparable with the live price.
       const rawLots = [{
         transaction_id: `manual-${manual.id}`,
         date,
         original_qty: manual.shares,
         remaining_qty: manual.shares,
-        buy_price: manual.shares ? (manual.cost_basis_eur || 0) / manual.shares : null,
-        currency: 'EUR',
+        buy_price: manual.shares ? (manual.cost_basis_eur || 0) / (manual.shares * rate) : null,
+        currency: manual.currency || 'EUR',
         cost_eur: manual.cost_basis_eur || 0,
         purchase_value_eur: manual.cost_basis_eur || 0,
         costs_eur: 0,
@@ -2079,9 +2079,7 @@ app.get('/api/performance', (req, res) => {
       const lots = decorateLots(rawLots, {
         holdingKeyPrefix: `m-${manual.id}`,
         price: manual.latest_price,
-        rate: (manual.total_value_eur != null && manual.latest_price && manual.shares)
-          ? (manual.total_value_eur / (manual.latest_price * manual.shares))
-          : 1,
+        rate,
       });
       holdings.push(summarizeLots(lots, {
         id: manual.id,
@@ -2311,25 +2309,33 @@ app.get('/api/time-travel', (req, res) => {
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return res.status(400).json({ error: 'Invalid date. Use YYYY-MM-DD format.' });
   }
+  // Optional baseline for period change: holdings are compared with their value
+  // at the close of `from`, net of buys and sells in between.
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || '') && req.query.from < date
+    ? req.query.from
+    : null;
 
   const db = getDb();
   const includeManual = includeOtherBrokers(req);
 
-  // Get all transactions up to and including this date (normalize date to YYYY-MM-DD)
-  const transactions = db.prepare(
-    'SELECT * FROM transactions ORDER BY date'
-  ).all().filter(t => {
-    const tDate = (t.date || '').split('T')[0];
-    return tDate <= date;
-  });
+  const allTransactions = db.prepare('SELECT * FROM transactions ORDER BY date').all();
+  const transactions = allTransactions.filter((t) => (t.date || '').split('T')[0] <= date);
 
-  // Calculate holdings at this date
-  const holdingsMap = {}; // stock_id -> total quantity
+  const holdingsMap = {};
+  const fromQtyMap = {};
+  const periodFlowMap = {};
   for (const t of transactions) {
+    const tDate = (t.date || '').split('T')[0];
     holdingsMap[t.stock_id] = (holdingsMap[t.stock_id] || 0) + t.quantity;
+    if (!from) continue;
+    if (tDate <= from) {
+      fromQtyMap[t.stock_id] = (fromQtyMap[t.stock_id] || 0) + t.quantity;
+    } else {
+      const flow = t.quantity > 0 ? Math.abs(t.total_eur) : -Math.abs(t.total_eur);
+      periodFlowMap[t.stock_id] = (periodFlowMap[t.stock_id] || 0) + flow;
+    }
   }
 
-  // Remove stocks with zero or negative holdings
   const activeStockIds = Object.entries(holdingsMap)
     .filter(([, qty]) => qty > 0)
     .map(([id]) => Number(id));
@@ -2341,6 +2347,7 @@ app.get('/api/time-travel', (req, res) => {
   if (!activeStockIds.length && !manualHoldings.length) {
     return res.json({
       date,
+      from,
       total_value_eur: 0,
       daily_change_eur: 0,
       daily_change_pct: 0,
@@ -2350,11 +2357,18 @@ app.get('/api/time-travel', (req, res) => {
 
   const { globalRates, historicalRates } = loadExchangeRates(db);
   const getRate = (currency, targetDate) => getRateOnDate(currency, targetDate, globalRates, historicalRates);
-  const queryYear = date.slice(0, 4);
-  const ytdStartDate = `${queryYear}-01-01`;
+  const stockRate = buildStockRateResolver(allTransactions, globalRates, historicalRates);
+
+  const periodChange = (valueEur, fromValueEur, flowEur) => {
+    if (!from || valueEur == null || fromValueEur == null) return { eur: null, pct: null };
+    const gain = valueEur - fromValueEur - flowEur;
+    const base = fromValueEur + Math.max(0, flowEur);
+    return { eur: round2(gain), pct: base > 0 ? round2((gain / base) * 100) : null };
+  };
 
   const holdingsList = [];
   let totalValueEur = 0;
+  let totalDailyChangeEur = 0;
   let totalPrevValueEur = 0;
 
   for (const stockId of activeStockIds) {
@@ -2379,12 +2393,10 @@ app.get('/api/time-travel', (req, res) => {
     const price = priceRow?.close ?? null;
     const prevPrice = prevPriceRow?.close ?? null;
     const currency = priceRow?.currency || stock.currency;
-    const rate = getRate(currency, date);
+    const rate = stockRate(stockId, currency, date);
 
     const totalValue = price != null ? price * qty : null;
     const totalValueInEur = totalValue != null ? totalValue * rate : null;
-    const prevTotalValue = prevPrice != null ? prevPrice * qty : null;
-    const prevTotalValueInEur = prevTotalValue != null ? prevTotalValue * rate : null;
 
     let dailyChange = null;
     let dailyChangePct = null;
@@ -2393,29 +2405,31 @@ app.get('/api/time-travel', (req, res) => {
       dailyChangePct = ((price - prevPrice) / prevPrice) * 100;
     }
 
-    let ytdChange = null;
-    let ytdChangePct = null;
-    if (price != null) {
-      const ytdStartRow = db.prepare(
-        `SELECT * FROM stock_prices
-         WHERE stock_id = ? AND substr(date, 1, 10) >= ? AND substr(date, 1, 10) <= ?
-         ORDER BY substr(date, 1, 10) ASC, date ASC
-         LIMIT 1`
-      ).get(stockId, ytdStartDate, date);
-      if (ytdStartRow?.close != null && ytdStartRow.close > 0) {
-        const ytdStartDay = (ytdStartRow.date || '').split('T')[0];
-        const ytdCurrency = ytdStartRow.currency || currency;
-        const ytdStartRate = getRate(ytdCurrency, ytdStartDay);
-        const priceRate = getRate(ytdCurrency, date);
-        const priceEur = price * priceRate;
-        const ytdStartEur = ytdStartRow.close * ytdStartRate;
-        ytdChange = (priceEur - ytdStartEur) * qty;
-        ytdChangePct = ((priceEur - ytdStartEur) / ytdStartEur) * 100;
+    let fromValueEur = null;
+    if (from) {
+      const fromQty = fromQtyMap[stockId] || 0;
+      fromValueEur = 0;
+      if (fromQty > 0) {
+        const fromRow = db.prepare(
+          `SELECT * FROM stock_prices
+           WHERE stock_id = ? AND substr(date, 1, 10) <= ?
+           ORDER BY substr(date, 1, 10) DESC, date DESC
+           LIMIT 1`
+        ).get(stockId, from);
+        fromValueEur = fromRow?.close != null
+          ? fromQty * fromRow.close * stockRate(stockId, fromRow.currency || currency, from)
+          : null;
       }
     }
+    const period = periodChange(totalValueInEur, fromValueEur, periodFlowMap[stockId] || 0);
 
     if (totalValueInEur != null) totalValueEur += totalValueInEur;
-    if (prevTotalValueInEur != null) totalPrevValueEur += prevTotalValueInEur;
+    if (dailyChange != null) {
+      totalDailyChangeEur += dailyChange;
+      totalPrevValueEur += totalValueInEur - dailyChange;
+    } else if (totalValueInEur != null) {
+      totalPrevValueEur += totalValueInEur;
+    }
 
     holdingsList.push({
       id: stock.id,
@@ -2428,12 +2442,12 @@ app.get('/api/time-travel', (req, res) => {
       shares: qty,
       price,
       price_date: priceRow?.date ?? null,
-      total_value: totalValue != null ? Math.round(totalValue * 100) / 100 : null,
-      total_value_eur: totalValueInEur != null ? Math.round(totalValueInEur * 100) / 100 : null,
-      daily_change_eur: dailyChange != null ? Math.round(dailyChange * 100) / 100 : null,
-      daily_change_pct: dailyChangePct != null ? Math.round(dailyChangePct * 100) / 100 : null,
-      ytd_change_eur: ytdChange != null ? Math.round(ytdChange * 100) / 100 : null,
-      ytd_change_pct: ytdChangePct != null ? Math.round(ytdChangePct * 100) / 100 : null,
+      total_value: totalValue != null ? round2(totalValue) : null,
+      total_value_eur: totalValueInEur != null ? round2(totalValueInEur) : null,
+      daily_change_eur: dailyChange != null ? round2(dailyChange) : null,
+      daily_change_pct: dailyChangePct != null ? round2(dailyChangePct) : null,
+      period_change_eur: period.eur,
+      period_change_pct: period.pct,
     });
   }
 
@@ -2453,8 +2467,6 @@ app.get('/api/time-travel', (req, res) => {
 
     const totalValue = price != null ? price * m.quantity : null;
     const totalValueInEur = totalValue != null ? totalValue * rate : null;
-    const prevTotalValue = prevPrice != null ? prevPrice * m.quantity : null;
-    const prevTotalValueInEur = prevTotalValue != null ? prevTotalValue * rate : null;
 
     let dailyChange = null;
     let dailyChangePct = null;
@@ -2463,29 +2475,29 @@ app.get('/api/time-travel', (req, res) => {
       dailyChangePct = ((price - prevPrice) / prevPrice) * 100;
     }
 
-    let ytdChange = null;
-    let ytdChangePct = null;
-    if (price != null) {
-      const ytdStartRow = db.prepare(
-        `SELECT * FROM manual_holding_prices
-         WHERE manual_holding_id = ? AND substr(date, 1, 10) >= ? AND substr(date, 1, 10) <= ?
-         ORDER BY substr(date, 1, 10) ASC, date ASC
-         LIMIT 1`
-      ).get(m.id, ytdStartDate, date);
-      if (ytdStartRow?.close != null && ytdStartRow.close > 0) {
-        const ytdStartDay = (ytdStartRow.date || '').split('T')[0];
-        const ytdCurrency = ytdStartRow.currency || currency;
-        const ytdStartRate = getRate(ytdCurrency, ytdStartDay);
-        const priceRate = getRate(ytdCurrency, date);
-        const priceEur = price * priceRate;
-        const ytdStartEur = ytdStartRow.close * ytdStartRate;
-        ytdChange = (priceEur - ytdStartEur) * m.quantity;
-        ytdChangePct = ((priceEur - ytdStartEur) / ytdStartEur) * 100;
+    let fromValueEur = null;
+    let flow = 0;
+    if (from) {
+      const purchaseDay = (m.purchase_date || '').split('T')[0];
+      if (purchaseDay > from) {
+        fromValueEur = 0;
+        flow = m.cost_basis_eur || 0;
+      } else {
+        const fromRow = getManualHoldingPriceOnDate(db, m.id, from);
+        fromValueEur = fromRow?.close != null
+          ? m.quantity * fromRow.close * getRate(fromRow.currency || currency, from)
+          : null;
       }
     }
+    const period = periodChange(totalValueInEur, fromValueEur, flow);
 
     if (totalValueInEur != null) totalValueEur += totalValueInEur;
-    if (prevTotalValueInEur != null) totalPrevValueEur += prevTotalValueInEur;
+    if (dailyChange != null) {
+      totalDailyChangeEur += dailyChange;
+      totalPrevValueEur += totalValueInEur - dailyChange;
+    } else if (totalValueInEur != null) {
+      totalPrevValueEur += totalValueInEur;
+    }
 
     holdingsList.push({
       id: m.id,
@@ -2498,30 +2510,23 @@ app.get('/api/time-travel', (req, res) => {
       shares: m.quantity,
       price,
       price_date: priceRow?.date ?? null,
-      total_value: totalValue != null ? Math.round(totalValue * 100) / 100 : null,
-      total_value_eur: totalValueInEur != null ? Math.round(totalValueInEur * 100) / 100 : null,
-      daily_change_eur: dailyChange != null ? Math.round(dailyChange * 100) / 100 : null,
-      daily_change_pct: dailyChangePct != null ? Math.round(dailyChangePct * 100) / 100 : null,
-      ytd_change_eur: ytdChange != null ? Math.round(ytdChange * 100) / 100 : null,
-      ytd_change_pct: ytdChangePct != null ? Math.round(ytdChangePct * 100) / 100 : null,
+      total_value: totalValue != null ? round2(totalValue) : null,
+      total_value_eur: totalValueInEur != null ? round2(totalValueInEur) : null,
+      daily_change_eur: dailyChange != null ? round2(dailyChange) : null,
+      daily_change_pct: dailyChangePct != null ? round2(dailyChangePct) : null,
+      period_change_eur: period.eur,
+      period_change_pct: period.pct,
     });
   }
 
-  // Sort by total value descending
   holdingsList.sort((a, b) => (b.total_value_eur || 0) - (a.total_value_eur || 0));
-
-  const portfolioDailyChange = totalPrevValueEur > 0
-    ? Math.round((totalValueEur - totalPrevValueEur) * 100) / 100
-    : 0;
-  const portfolioDailyChangePct = totalPrevValueEur > 0
-    ? Math.round(((totalValueEur - totalPrevValueEur) / totalPrevValueEur) * 10000) / 100
-    : 0;
 
   res.json({
     date,
-    total_value_eur: Math.round(totalValueEur * 100) / 100,
-    daily_change_eur: portfolioDailyChange,
-    daily_change_pct: portfolioDailyChangePct,
+    from,
+    total_value_eur: round2(totalValueEur),
+    daily_change_eur: totalPrevValueEur > 0 ? round2(totalDailyChangeEur) : 0,
+    daily_change_pct: totalPrevValueEur > 0 ? round2((totalDailyChangeEur / totalPrevValueEur) * 100) : 0,
     holdings: holdingsList,
   });
 });
