@@ -69,8 +69,11 @@ app.use(express.json());
 function persistLivePriceSnapshot(db, stock, quote) {
   if (!quote || quote.price == null) return null;
 
-  // Keep intraday snapshots at second precision for stable ordering and compact storage.
-  const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+  // Stamped with the quote's market time (see marketTimestamp); refetching an
+  // unchanged quote, e.g. over the weekend, must not add a new row.
+  const timestamp = quote.timestamp || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const existing = db.prepare('SELECT id FROM stock_prices WHERE stock_id = ? AND date = ?').get(stock.id, timestamp);
+  if (existing) return timestamp;
   db.prepare(`
     INSERT INTO stock_prices (stock_id, date, open, high, low, close, volume, currency)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)

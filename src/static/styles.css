@@ -856,6 +856,13 @@ html.dark .brand-mark {
   cursor: pointer;
 }
 
+.seg-compact button {
+  min-width: 1.75rem;
+  height: 1.4rem;
+  padding: 0 0.45rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .seg button:hover {
   color: var(--foreground);
 }
@@ -2912,6 +2919,11 @@ html.dark .dialog {
     height: 1.45rem;
     padding: 0 0.4rem;
     font-size: 0.6875rem;
+  }
+
+  .seg-compact button {
+    min-width: 1.6rem;
+    height: 1.3rem;
   }
 
   .tt-header {
