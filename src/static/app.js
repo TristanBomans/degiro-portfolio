@@ -132,6 +132,22 @@
           ${change.horizon ? `<span class="summary-horizon">${escapeHtml(change.horizon)}</span>` : ''}
         </div>`
       : '';
+    const items = summarySecondaryHtml(secondary);
+    return `
+      <div class="summary">
+        <div class="summary-main">
+          <div class="summary-label">${label}</div>
+          <div class="summary-value"${numAttrs('value', value, 'eurHtml')}>${formatEurHtml(value)}</div>
+          ${changeHtml}
+        </div>
+        ${items}
+        ${note ? `<div class="summary-note">${escapeHtml(note)}</div>` : ''}
+      </div>`;
+  }
+
+  // Invested / Open with their delta; tapping switches the shared %/€ mode.
+  function summarySecondaryHtml(secondary, extraClass = '') {
+    if (!secondary.length) return '';
     const showEur = state.holdingChangeMode === 'eur';
     const narrow = isCompactView();
     const items = secondary.map((item) => {
@@ -147,16 +163,7 @@
           </span>
         </span>`;
     }).join('');
-    return `
-      <div class="summary">
-        <div class="summary-main">
-          <div class="summary-label">${label}</div>
-          <div class="summary-value"${numAttrs('value', value, 'eurHtml')}>${formatEurHtml(value)}</div>
-          ${changeHtml}
-        </div>
-        ${items ? `<button class="summary-secondary" type="button" data-toggle-change-mode title="Show gains in ${showEur ? 'percent' : 'euro'}">${items}</button>` : ''}
-        ${note ? `<div class="summary-note">${escapeHtml(note)}</div>` : ''}
-      </div>`;
+    return `<button class="summary-secondary ${extraClass}" type="button" data-toggle-change-mode title="Show gains in ${showEur ? 'percent' : 'euro'}">${items}</button>`;
   }
 
   const shownNumbers = new Map();
@@ -1396,7 +1403,7 @@
               <div class="holding-info with-avatar">
                 ${positionAvatar(stock.name)}
                 <div class="with-avatar-text">
-                  <div class="holding-name">${escapeHtml(stock.name)}</div>
+                  <div class="holding-name" title="${escapeHtml(stock.name)}">${escapeHtml(positionTitle(stock.name))}</div>
                   <div class="holding-meta">${escapeHtml(ticker)}${stock.exchange ? ` · ${escapeHtml(stock.exchange)}` : ''}<span class="holding-meta-extra">${change ? ` · ${change}` : ''} · ${stock.shares} sh</span></div>
                 </div>
               </div>
@@ -1555,7 +1562,12 @@
   }
 
   function updateScaleButton() {
-    $('chart-scale-btn').textContent = state.chartAutoScale ? 'Auto scale' : 'From zero';
+    const btn = $('chart-scale-btn');
+    const label = state.chartAutoScale ? 'Scale: fit to data (tap to start from zero)' : 'Scale: from zero (tap to fit to data)';
+    btn.classList.toggle('is-active', !state.chartAutoScale);
+    btn.setAttribute('aria-pressed', String(!state.chartAutoScale));
+    btn.setAttribute('aria-label', label);
+    btn.title = label;
   }
 
   function formatPortfolioMonth(date) {
@@ -1780,6 +1792,7 @@
     const idx = data?.dates?.indexOf(state.selectedHistoryDate) ?? -1;
     if (idx < 0) {
       header.innerHTML = '';
+      $('graph-legend').innerHTML = '';
       return;
     }
     const win = graphWindow();
@@ -1796,11 +1809,13 @@
       label: 'Portfolio value',
       value,
       change: period ? { ...period, horizon: win.label } : null,
-      secondary: [
-        { kind: 'invested', label: 'Invested', value: invested, eur: investedPnl, pct: investedPct },
-        { kind: 'open', label: 'Open', value: openCost, eur: openPnl, pct: openPct },
-      ],
     });
+    // The blue line is the value above; the legend names the other two lines
+    // and carries their figures for the selected day.
+    $('graph-legend').innerHTML = summarySecondaryHtml([
+      { kind: 'invested', label: 'Invested', value: invested, eur: investedPnl, pct: investedPct },
+      { kind: 'open', label: 'Open', value: openCost, eur: openPnl, pct: openPct },
+    ], 'legend-values');
     setCompactHeader('graph', value, period ? { ...period, horizon: win.label } : null);
   }
 
@@ -1887,6 +1902,14 @@
     [/vaneck/i, 'VE', 5, 60],
   ];
 
+  // Next to its issuer mark a name drops the issuer: "iS  MSCI WORLD A".
+  function positionTitle(name) {
+    const text = String(name || '');
+    if (!ISSUER_MARKS.some(([pattern]) => pattern.test(text))) return text;
+    const stripped = text.replace(/^(ishares|amundi|lyxor|vanguard|db x-trackers|xtrackers|spdr|invesco|wisdomtree|vaneck)\b[\s-]*/i, '');
+    return stripped || text;
+  }
+
   function positionAvatar(name) {
     const text = String(name || '');
     const known = ISSUER_MARKS.find(([pattern]) => pattern.test(text));
@@ -1925,7 +1948,7 @@
           <div class="with-avatar">
             ${positionAvatar(h.name)}
             <div class="with-avatar-text">
-              <div class="tt-holding-name">${escapeHtml(h.name)}</div>
+              <div class="tt-holding-name" title="${escapeHtml(h.name)}">${escapeHtml(positionTitle(h.name))}</div>
               <div class="tt-holding-meta">${escapeHtml(h.exchange || '')} · ${priceStr} × ${formatShares(h.shares)}</div>
             </div>
           </div>
@@ -2686,7 +2709,7 @@
                   <div class="with-avatar">
                     ${positionAvatar(h.name)}
                     <div class="with-avatar-text">
-                      <div class="perf-holding-name">${escapeHtml(h.name)}</div>
+                      <div class="perf-holding-name" title="${escapeHtml(h.name)}">${escapeHtml(positionTitle(h.name))}</div>
                       <div class="perf-holding-meta">${meta}</div>
                     </div>
                   </div>
@@ -3198,6 +3221,7 @@
     $('chart-scale-btn').addEventListener('click', () => {
       state.chartAutoScale = !state.chartAutoScale;
       updateScaleButton();
+      startChartReveal(valuationChart);
       applyChartRange();
     });
     $('tt-prev').addEventListener('click', () => shiftGraphPeriod(-1));

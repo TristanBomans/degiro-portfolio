@@ -153,21 +153,19 @@
             </div>
             <div class="panel-body">
               <div id="tt-header-display"></div>
-              <div class="chart-controls">
-                <div class="seg" id="chart-range-selector"></div>
-                <button class="btn btn-outline" id="chart-scale-btn" type="button">From zero</button>
-              </div>
               <div class="chart-shell">
-                <div class="chart-legend">
-                  <span class="legend-item"><i class="legend-swatch value"></i> Portfolio value</span>
-                  <span class="legend-item"><i class="legend-swatch invested"></i> Net invested</span>
-                  <span class="legend-item"><i class="legend-swatch open"></i> Open positions</span>
-                </div>
+                <div class="chart-legend" id="graph-legend"></div>
                 <div class="chart-canvas-wrap" id="chart-canvas-wrap">
                   <canvas id="valuation-canvas"></canvas>
                   <span class="chart-live-dot" id="chart-live-dot" aria-hidden="true" hidden></span>
                   <div class="chart-tooltip" id="chart-tooltip" hidden></div>
                 </div>
+              </div>
+              <div class="chart-controls chart-controls-below">
+                <div class="seg seg-tabs" id="chart-range-selector"></div>
+                <button class="btn btn-ghost btn-icon chart-scale-btn" id="chart-scale-btn" type="button" aria-pressed="false">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4"/></svg>
+                </button>
               </div>
               <div class="date-nav period-pager">
                 <button class="btn btn-outline btn-icon" id="tt-prev" type="button" aria-label="Previous period">

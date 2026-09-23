@@ -1018,6 +1018,54 @@ html.dark .brand-mark {
   gap: 0.4rem;
 }
 
+/* Invested / Open double as the chart legend, with values for the selected day. */
+.summary-secondary.legend-values {
+  justify-self: start;
+  color: var(--foreground);
+}
+
+.legend-values .summary-item-label .legend-swatch {
+  width: 1.05rem;
+}
+
+/* Range tabs under the chart: quiet, one soft pill for the active range. */
+.chart-controls-below {
+  flex-wrap: nowrap;
+  justify-content: center;
+  margin: 0.65rem 0 0;
+}
+
+.seg.seg-tabs {
+  display: flex;
+  flex: 0 1 26rem;
+  justify-content: space-between;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.seg.seg-tabs button {
+  flex: 1;
+  max-width: 4rem;
+}
+
+.seg.seg-tabs.has-indicator::before {
+  top: 0;
+  bottom: 0;
+  background: var(--muted);
+  box-shadow: none;
+}
+
+.chart-scale-btn {
+  flex: none;
+  color: var(--muted-foreground);
+}
+
+.chart-scale-btn.is-active {
+  --control-icon-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
 .legend-swatch {
   width: 1.15rem;
   height: 0;
@@ -3061,9 +3109,28 @@ html.dark .dialog {
   }
 
   #view-graph .chart-legend {
+    display: block;
     padding: 0 0.75rem;
-    gap: 0.45rem 0.75rem;
-    font-size: 0.6875rem;
+  }
+
+  .summary-secondary.legend-values {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    border-top: 0;
+  }
+
+  .chart-controls-below {
+    justify-content: space-between;
+    margin: 0.5rem 0 0;
+  }
+
+  .seg.seg-tabs {
+    flex: 1;
+  }
+
+  .seg.seg-tabs button {
+    max-width: none;
   }
 
   #view-graph .chart-shell {
