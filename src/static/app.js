@@ -50,6 +50,35 @@
 
   const $ = (id) => document.getElementById(id);
 
+  // Last successful responses are kept locally so the app opens on the last
+  // known numbers instantly and refreshes them once the server answers.
+  const CACHE_PREFIX = 'pm-cache:';
+
+  function readCache(url) {
+    try {
+      return JSON.parse(localStorage.getItem(CACHE_PREFIX + url));
+    } catch {
+      return null;
+    }
+  }
+
+  function writeCache(url, data) {
+    try {
+      localStorage.setItem(CACHE_PREFIX + url, JSON.stringify(data));
+    } catch { /* storage full or unavailable */ }
+  }
+
+  function clearCache() {
+    Object.keys(localStorage).filter((key) => key.startsWith(CACHE_PREFIX)).forEach((key) => localStorage.removeItem(key));
+  }
+
+  async function fetchJson(url, options) {
+    const resp = await fetch(url, options);
+    const data = await resp.json();
+    if (resp.ok) writeCache(url, data);
+    return data;
+  }
+
   function otherBrokersQueryParam() {
     return `?includeOtherBrokers=${state.includeOtherBrokers ? '1' : '0'}`;
   }
@@ -63,6 +92,22 @@
     return `${prefix}${formatEur(value)}`;
   }
 
+  // Whole euros carry the figure; cents sit smaller and lighter behind them.
+  function formatEurHtml(value) {
+    const text = formatEur(value);
+    const dot = text.lastIndexOf('.');
+    return dot < 0 ? text : `${text.slice(0, dot)}<span class="cents">${text.slice(dot)}</span>`;
+  }
+
+  // Large amounts in narrow spots read as €11.9k; the exact amount stays in the title.
+  function formatShortSignedEur(value) {
+    const amount = Math.abs(value);
+    if (amount < 10000) return formatSignedEur(value);
+    const prefix = value > 0 ? '+' : value < 0 ? '-' : '';
+    const [divisor, suffix] = amount >= 1e6 ? [1e6, 'M'] : [1e3, 'k'];
+    return `${prefix}€${(amount / divisor).toLocaleString('en-US', { maximumFractionDigits: 1 })}${suffix}`;
+  }
+
   function formatCompactEur(value) {
     const amount = Math.round(Math.abs(Number(value) || 0) * 100) / 100;
     const minimumFractionDigits = Number.isInteger(amount) ? 0 : 2;
@@ -74,10 +119,84 @@
     return `${prefix}${Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
   }
 
-  function metricChangeHtml(eur, pct, { horizon } = {}) {
-    if (eur == null || pct == null || Number.isNaN(eur) || Number.isNaN(pct)) return '';
-    const horizonHtml = horizon ? `<span class="stat-horizon">${horizon}</span>` : '';
-    return `<div class="stat-sub ${numberClass(eur)}">${horizonHtml}<span class="stat-pnl">${formatSignedEur(eur)}</span><span class="stat-pct">${formatPct(pct)}</span></div>`;
+  // One primary figure with its change, then quieter secondary metrics whose
+  // delta follows the shared %/€ preference (tap them to switch).
+  function summaryHtml({ label, value, change, secondary = [], note = '', animate = false }) {
+    const numAttrs = (key, amount, format) => (animate
+      ? ` data-num="${key}" data-value="${amount}" data-format="${format}"`
+      : '');
+    const changeHtml = change?.eur != null
+      ? `<div class="summary-change ${numberClass(change.eur)}">
+          <span${numAttrs('change', change.eur, 'signedEur')}>${formatSignedEur(change.eur)}</span>
+          ${change.pct != null ? `<span class="summary-change-pct">${formatPct(change.pct)}</span>` : ''}
+          ${change.horizon ? `<span class="summary-horizon">${escapeHtml(change.horizon)}</span>` : ''}
+        </div>`
+      : '';
+    const showEur = state.holdingChangeMode === 'eur';
+    const narrow = isCompactView();
+    const items = secondary.map((item) => {
+      const delta = showEur ? item.eur : item.pct;
+      const deltaText = delta == null ? '' : (showEur ? (narrow ? formatShortSignedEur(delta) : formatSignedEur(delta)) : formatPct(delta));
+      const deltaTitle = showEur && delta != null ? ` title="${formatSignedEur(delta)}"` : '';
+      return `
+        <span class="summary-item">
+          <span class="summary-item-label"><i class="legend-swatch ${item.kind}"></i>${item.label}</span>
+          <span class="summary-item-figures">
+            <span class="summary-item-value">${item.value != null ? formatEurHtml(item.value) : '—'}</span>
+            <span class="summary-item-delta ${numberClass(delta)}"${deltaTitle}>${deltaText}</span>
+          </span>
+        </span>`;
+    }).join('');
+    return `
+      <div class="summary">
+        <div class="summary-main">
+          <div class="summary-label">${label}</div>
+          <div class="summary-value"${numAttrs('value', value, 'eurHtml')}>${formatEurHtml(value)}</div>
+          ${changeHtml}
+        </div>
+        ${items ? `<button class="summary-secondary" type="button" data-toggle-change-mode title="Show gains in ${showEur ? 'percent' : 'euro'}">${items}</button>` : ''}
+        ${note ? `<div class="summary-note">${escapeHtml(note)}</div>` : ''}
+      </div>`;
+  }
+
+  const shownNumbers = new Map();
+
+  // Numbers that changed since the last render roll to their new value.
+  function animateNumbers(root) {
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    root.querySelectorAll('[data-num]').forEach((el) => {
+      const key = el.dataset.num;
+      const to = Number(el.dataset.value);
+      const from = shownNumbers.get(key);
+      shownNumbers.set(key, to);
+      if (reduce || from == null || !Number.isFinite(to) || Math.abs(from - to) < 0.005) return;
+      const format = { signedEur: formatSignedEur, eurHtml: formatEurHtml }[el.dataset.format] || formatEur;
+      const paint = (amount) => {
+        if (el.dataset.format === 'eurHtml') el.innerHTML = format(amount);
+        else el.textContent = format(amount);
+      };
+      const start = performance.now();
+      const duration = 650;
+      const step = (now) => {
+        if (!el.isConnected) return;
+        const t = Math.min(1, (now - start) / duration);
+        const eased = 1 - (1 - t) ** 3;
+        paint(from + (to - from) * eased);
+        if (t < 1) requestAnimationFrame(step);
+      };
+      paint(from);
+      requestAnimationFrame(step);
+    });
+  }
+
+  function setChangeMode(mode) {
+    if (mode === state.holdingChangeMode) return;
+    state.holdingChangeMode = mode;
+    localStorage.setItem('holdingChangeMode', mode);
+    renderHoldingChangeMode();
+    renderHoldings();
+    if (state.latestPortfolioSummary) renderSummary(state.latestPortfolioSummary);
+    renderGraphHeader();
   }
 
   function holdingsDayChange() {
@@ -282,7 +401,88 @@
       grid: cssVar('--border') || (dark ? 'rgba(255,255,255,0.08)' : '#e4e4e7'),
       text: cssVar('--muted-foreground') || '#71717a',
       fill: dark ? 'rgba(99, 102, 241, 0.16)' : 'rgba(79, 70, 229, 0.10)',
+      fillTop: dark ? 'rgba(99, 102, 241, 0.30)' : 'rgba(79, 70, 229, 0.18)',
+      fillBottom: dark ? 'rgba(99, 102, 241, 0)' : 'rgba(79, 70, 229, 0)',
     };
+  }
+
+  // Monotone cubic (Fritsch–Carlson) through the points: smooth, but never
+  // overshoots a local high or low. Dense series are already smooth enough.
+  function traceSmoothLine(ctx, pts) {
+    if (!pts.length) return;
+    ctx.moveTo(pts[0].x, pts[0].y);
+    if (pts.length < 3 || pts.length > 400) {
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      return;
+    }
+    const n = pts.length;
+    const slopes = [];
+    for (let i = 0; i < n - 1; i++) {
+      const dx = pts[i + 1].x - pts[i].x || 1e-6;
+      slopes.push((pts[i + 1].y - pts[i].y) / dx);
+    }
+    const tangents = [slopes[0]];
+    for (let i = 1; i < n - 1; i++) {
+      tangents.push(slopes[i - 1] * slopes[i] <= 0 ? 0 : (slopes[i - 1] + slopes[i]) / 2);
+    }
+    tangents.push(slopes[n - 2]);
+    for (let i = 0; i < n - 1; i++) {
+      if (slopes[i] === 0) { tangents[i] = 0; tangents[i + 1] = 0; continue; }
+      const a = tangents[i] / slopes[i];
+      const b = tangents[i + 1] / slopes[i];
+      const h = a * a + b * b;
+      if (h > 9) {
+        const t = 3 / Math.sqrt(h);
+        tangents[i] = t * a * slopes[i];
+        tangents[i + 1] = t * b * slopes[i];
+      }
+    }
+    for (let i = 0; i < n - 1; i++) {
+      const dx = (pts[i + 1].x - pts[i].x) / 3;
+      ctx.bezierCurveTo(
+        pts[i].x + dx, pts[i].y + tangents[i] * dx,
+        pts[i + 1].x - dx, pts[i + 1].y - tangents[i + 1] * dx,
+        pts[i + 1].x, pts[i + 1].y,
+      );
+    }
+  }
+
+  function fillArea(ctx, pts, baseY, top, colors) {
+    if (!pts.length) return;
+    ctx.beginPath();
+    traceSmoothLine(ctx, pts);
+    ctx.lineTo(pts[pts.length - 1].x, baseY);
+    ctx.lineTo(pts[0].x, baseY);
+    ctx.closePath();
+    const gradient = ctx.createLinearGradient(0, top, 0, baseY);
+    gradient.addColorStop(0, colors.fillTop);
+    gradient.addColorStop(1, colors.fillBottom);
+    ctx.fillStyle = gradient;
+    ctx.fill();
+  }
+
+  // When the visible range changes the axis eases to its new scale while the
+  // series is revealed from left to right.
+  const REVEAL_MS = 520;
+
+  function startChartReveal(chart) {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    chart.reveal = { start: performance.now(), fromRange: chart.lastRange || null };
+    requestAnimationFrame(() => chart.draw());
+  }
+
+  function chartRevealState(chart, targetRange) {
+    const reveal = chart.reveal;
+    if (!reveal) return { progress: 1, range: targetRange };
+    const t = Math.min(1, (performance.now() - reveal.start) / REVEAL_MS);
+    const eased = 1 - (1 - t) ** 3;
+    if (t >= 1) chart.reveal = null;
+    else requestAnimationFrame(() => chart.draw());
+    const from = reveal.fromRange;
+    const range = from
+      ? { min: from.min + (targetRange.min - from.min) * eased, max: from.max + (targetRange.max - from.max) * eased }
+      : targetRange;
+    return { progress: eased, range };
   }
 
   const valuationChart = {
@@ -292,7 +492,17 @@
     tooltip: null,
     hoverIndex: null,
     scrubbing: false,
+    reveal: null,
+    lastRange: null,
     bound: false,
+
+    placeLiveDot(point) {
+      const dot = $('chart-live-dot');
+      if (!dot) return;
+      dot.hidden = !point;
+      if (point) dot.style.transform = `translate(${point.x}px, ${point.y}px)`;
+    },
+
     pad: { top: 12, right: 12, bottom: 26, left: 52 },
 
     init() {
@@ -378,7 +588,7 @@
       this.canvas.height = Math.round(height * dpr);
       this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       this.pad = window.matchMedia('(max-width: 860px)').matches
-        ? { top: 8, right: 4, bottom: 22, left: 44 }
+        ? { top: 8, right: 8, bottom: 22, left: 44 }
         : { top: 12, right: 12, bottom: 26, left: 52 };
       const { pad } = this;
       return {
@@ -476,7 +686,9 @@
       ctx.clearRect(0, 0, width, height);
       if (!slice?.dates.length) return;
 
-      const range = this.yRange(slice);
+      const targetRange = this.yRange(slice);
+      const { progress, range } = chartRevealState(this, targetRange);
+      this.lastRange = targetRange;
       const colors = chartColors();
       const n = slice.dates.length;
       const { pad } = this;
@@ -523,22 +735,20 @@
         }
       };
 
-      ctx.beginPath();
-      let started = false;
+      const valuePts = [];
       for (let i = 0; i < n; i++) {
         if (slice.values[i] == null) continue;
-        const x = this.xOf(i, slice.dates, plotW);
-        const y = this.yOf(slice.values[i], range, plotH);
-        if (!started) { ctx.moveTo(x, y); started = true; }
-        else ctx.lineTo(x, y);
+        valuePts.push({ x: this.xOf(i, slice.dates, plotW), y: this.yOf(slice.values[i], range, plotH) });
       }
-      const lastX = this.xOf(n - 1, slice.dates, plotW);
-      const baseY = this.yOf(Math.max(0, range.min), range, plotH);
-      ctx.lineTo(lastX, baseY);
-      ctx.lineTo(this.xOf(0, slice.dates, plotW), baseY);
-      ctx.closePath();
-      ctx.fillStyle = colors.fill;
-      ctx.fill();
+
+      ctx.save();
+      if (progress < 1) {
+        ctx.beginPath();
+        ctx.rect(0, 0, pad.left + plotW * progress + 3, height);
+        ctx.clip();
+        ctx.globalAlpha = 0.35 + 0.65 * progress;
+      }
+      fillArea(ctx, valuePts, this.yOf(Math.max(0, range.min), range, plotH), pad.top, colors);
 
       ctx.setLineDash([5, 4]);
       ctx.strokeStyle = colors.invested;
@@ -557,8 +767,11 @@
       ctx.lineWidth = 2.1;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
-      pathFor(slice.values);
+      ctx.beginPath();
+      traceSmoothLine(ctx, valuePts);
       ctx.stroke();
+      ctx.restore();
+      this.placeLiveDot(progress === 1 && state.chartRangeOffset === 0 ? valuePts[valuePts.length - 1] : null);
 
       const markDate = state.selectedHistoryDate;
       if (markDate) {
@@ -620,6 +833,8 @@
     wrap: null,
     tooltip: null,
     hoverIndex: null,
+    reveal: null,
+    lastRange: null,
     bound: false,
     pad: { top: 12, right: 12, bottom: 26, left: 52 },
 
@@ -648,7 +863,7 @@
       this.canvas.height = Math.round(height * dpr);
       this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       this.pad = window.matchMedia('(max-width: 860px)').matches
-        ? { top: 8, right: 4, bottom: 22, left: 44 }
+        ? { top: 8, right: 8, bottom: 22, left: 44 }
         : { top: 12, right: 12, bottom: 26, left: 52 };
       const { pad } = this;
       return {
@@ -776,7 +991,9 @@
       ctx.clearRect(0, 0, width, height);
       if (!slice?.dates?.length) return;
 
-      const range = this.yRange();
+      const targetRange = this.yRange();
+      const { progress, range } = chartRevealState(this, targetRange);
+      this.lastRange = targetRange;
       const colors = chartColors();
       const n = slice.dates.length;
       const { pad } = this;
@@ -823,6 +1040,14 @@
         }
       };
 
+      ctx.save();
+      if (progress < 1) {
+        ctx.beginPath();
+        ctx.rect(0, 0, pad.left + plotW * progress + 3, height);
+        ctx.clip();
+        ctx.globalAlpha = 0.35 + 0.65 * progress;
+      }
+
       if (slice.costs) {
         ctx.setLineDash([5, 4]);
         ctx.strokeStyle = colors.invested;
@@ -842,31 +1067,23 @@
         ctx.setLineDash([]);
       }
 
-      ctx.beginPath();
-      let started = false;
+      const valuePts = [];
       for (let i = 0; i < n; i++) {
         if (slice.values[i] == null) continue;
-        const x = this.xOf(i, slice.dates, plotW);
-        const y = this.yOf(slice.values[i], range, plotH);
-        if (!started) { ctx.moveTo(x, y); started = true; }
-        else ctx.lineTo(x, y);
+        valuePts.push({ x: this.xOf(i, slice.dates, plotW), y: this.yOf(slice.values[i], range, plotH) });
       }
-      const lastX = this.xOf(n - 1, slice.dates, plotW);
       // The area represents the value series; always close it at the bottom of
       // the plot. A cost baseline can put fill above earlier value points.
-      const baseY = pad.top + plotH;
-      ctx.lineTo(lastX, baseY);
-      ctx.lineTo(this.xOf(0, slice.dates, plotW), baseY);
-      ctx.closePath();
-      ctx.fillStyle = colors.fill;
-      ctx.fill();
+      fillArea(ctx, valuePts, pad.top + plotH, pad.top, colors);
 
       ctx.strokeStyle = colors.value;
       ctx.lineWidth = 2.1;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
-      pathFor(slice.values);
+      ctx.beginPath();
+      traceSmoothLine(ctx, valuePts);
       ctx.stroke();
+      ctx.restore();
 
       if (this.hoverIndex != null && slice.dates[this.hoverIndex]) {
         const i = this.hoverIndex;
@@ -971,7 +1188,43 @@
     if (name === 'performance') {
       requestAnimationFrame(() => lotChart.draw());
     }
+    requestAnimationFrame(updateCompactHeader);
   }
+
+  // Once the big value scrolls under the top bar, the bar takes over a compact
+  // copy of it (value and change), like iOS large titles collapsing.
+  const compactHeaders = {};
+
+  function setCompactHeader(view, value, change) {
+    compactHeaders[view] = { value, change };
+    updateCompactHeader();
+  }
+
+  function updateCompactHeader() {
+    const topbar = document.querySelector('.topbar');
+    const view = document.querySelector('.view.active');
+    const name = view?.id?.replace(/^view-/, '');
+    const info = compactHeaders[name];
+    const valueEl = view?.querySelector('.summary-value');
+    const rect = valueEl?.getBoundingClientRect();
+    const compact = Boolean(info && rect?.height && rect.bottom < topbar.getBoundingClientRect().bottom);
+    if (compact) {
+      const whole = formatEur(info.value).replace(/\.\d+$/, '');
+      $('topbar-compact').innerHTML = `<span class="topbar-compact-value">${whole}</span>${info.change?.pct != null
+        ? `<span class="topbar-compact-change ${numberClass(info.change.eur)}">${formatPct(info.change.pct)}${info.change.horizon ? ` <em>${escapeHtml(info.change.horizon)}</em>` : ''}</span>`
+        : ''}`;
+    }
+    topbar.classList.toggle('is-compact', compact);
+  }
+
+  let compactHeaderFrame = 0;
+  window.addEventListener('scroll', () => {
+    if (compactHeaderFrame) return;
+    compactHeaderFrame = requestAnimationFrame(() => {
+      compactHeaderFrame = 0;
+      updateCompactHeader();
+    });
+  }, { passive: true });
 
   function setConnectionStatus(online) {
     const button = $('live-refresh-btn');
@@ -1049,9 +1302,8 @@
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
-      const resp = await fetch('/api/exchange-rates', { signal: controller.signal });
+      const data = await fetchJson('/api/exchange-rates', { signal: controller.signal });
       clearTimeout(timeout);
-      const data = await resp.json();
       if (data?.rates) state.exchangeRates = { ...state.exchangeRates, ...data.rates };
     } catch (err) {
       console.error('Failed to load exchange rates', err);
@@ -1061,39 +1313,33 @@
   function renderSummary(summary) {
     if (!summary) return;
     const latestPrice = latestPriceMoment();
-    const notes = [
+    const note = [
       priceFreshnessLabel(latestPrice),
       summary.other_brokers_count > 0 ? `Includes ${summary.other_brokers_count} other-broker positions` : '',
-    ].filter(Boolean);
-    const brokerNote = notes.length ? `<div class="stat-line">${notes.map(escapeHtml).join(' · ')}</div>` : '';
+    ].filter(Boolean).join(' · ');
     const dayChange = holdingsDayChange();
-    const day = dayChange
-      ? metricChangeHtml(dayChange.eur, dayChange.pct, { horizon: dayChangeHorizon(latestPrice) })
-      : '';
-    $('overview-hero').innerHTML = `
-      <div class="hero-metric">
-        <div class="stat-label"><i class="legend-swatch value"></i><span class="stat-label-full">Live portfolio value</span><span class="stat-label-short">Value</span></div>
-        <div class="stat-value">${formatEur(summary.current_value)}</div>
-        ${day}
-      </div>
-      <div class="hero-metric">
-        <div class="stat-label"><i class="legend-swatch invested"></i><span class="stat-label-full">Net invested</span><span class="stat-label-short">Invested</span></div>
-        <div class="stat-value">${formatEur(summary.net_invested)}</div>
-        ${metricChangeHtml(summary.gain_loss, summary.gain_loss_percent)}
-      </div>
-      <div class="hero-metric">
-        <div class="stat-label"><i class="legend-swatch open"></i><span class="stat-label-full">Open positions</span><span class="stat-label-short">Open</span></div>
-        <div class="stat-value">${formatEur(summary.open_cost)}</div>
-        ${metricChangeHtml(summary.open_gain_loss, summary.open_gain_loss_percent)}
-      </div>
-      ${brokerNote}
-    `;
+    const horizon = dayChangeHorizon(latestPrice);
+    const hero = $('overview-hero');
+    hero.innerHTML = summaryHtml({
+      label: 'Portfolio value',
+      value: summary.current_value,
+      change: dayChange ? { ...dayChange, horizon: horizon === '1d' ? 'today' : horizon } : null,
+      secondary: [
+        { kind: 'invested', label: 'Invested', value: summary.net_invested, eur: summary.gain_loss, pct: summary.gain_loss_percent },
+        { kind: 'open', label: 'Open', value: summary.open_cost, eur: summary.open_gain_loss, pct: summary.open_gain_loss_percent },
+      ],
+      note,
+      animate: true,
+    });
+    animateNumbers(hero);
+    setCompactHeader('overview', summary.current_value, dayChange ? { ...dayChange, horizon: horizon === '1d' ? 'today' : horizon } : null);
   }
 
-  async function loadPortfolioSummary() {
+  async function loadPortfolioSummary({ fromCache = false } = {}) {
     try {
-      const resp = await fetch(`/api/portfolio-summary${otherBrokersQueryParam()}`);
-      const summary = await resp.json();
+      const url = `/api/portfolio-summary${otherBrokersQueryParam()}`;
+      const summary = fromCache ? readCache(url) : await fetchJson(url);
+      if (!summary) return null;
       state.latestPortfolioSummary = summary;
       renderSummary(summary);
       return summary;
@@ -1110,6 +1356,7 @@
       btn.classList.toggle('active', active);
       btn.setAttribute('aria-pressed', String(active));
     });
+    syncSegIndicator($('holding-change-mode'));
   }
 
   function renderHoldings() {
@@ -1124,6 +1371,7 @@
       const valueEur = stock.latest_price != null ? stock.shares * stock.latest_price * rate : null;
       return { stock, valueEur };
     }).sort((a, b) => (b.valueEur || 0) - (a.valueEur || 0));
+    const totalValue = rows.reduce((sum, row) => sum + (row.valueEur || 0), 0);
 
     list.innerHTML = `
       <div class="holdings-list">
@@ -1141,18 +1389,23 @@
           const change = stock.price_change_pct != null
             ? `<span class="price-change ${numberClass(stock.price_change_pct)}">${stock.price_change_pct >= 0 ? '▲' : '▼'} ${changeText}</span>`
             : '';
+          const weight = totalValue > 0 && valueEur != null ? (valueEur / totalValue) * 100 : 0;
+          const key = `${stock.is_manual ? 'm' : 's'}-${stock.id}`;
           return `
-            <div class="holding-row is-clickable" data-perf-key="${stock.is_manual ? 'm' : 's'}-${stock.id}">
-              <div class="holding-info">
-                <div class="holding-name">${escapeHtml(stock.name)}</div>
-                <div class="holding-meta">${escapeHtml(ticker)}${stock.exchange ? ` · ${escapeHtml(stock.exchange)}` : ''}<span class="holding-meta-extra">${change ? ` · ${change}` : ''} · ${stock.shares} sh</span></div>
+            <div class="holding-row is-clickable" data-perf-key="${key}" style="--weight: ${weight.toFixed(2)}%" title="${weight.toFixed(1)}% of portfolio">
+              <div class="holding-info with-avatar">
+                ${positionAvatar(stock.name)}
+                <div class="with-avatar-text">
+                  <div class="holding-name">${escapeHtml(stock.name)}</div>
+                  <div class="holding-meta">${escapeHtml(ticker)}${stock.exchange ? ` · ${escapeHtml(stock.exchange)}` : ''}<span class="holding-meta-extra">${change ? ` · ${change}` : ''} · ${stock.shares} sh</span></div>
+                </div>
               </div>
               <div class="holding-price">
                 <div class="price-main">${stock.latest_price != null ? formatPrice(stock.latest_price, stock.currency) : '—'}</div>
                 ${change}
               </div>
               <div class="holding-value">
-                <div class="value-main">${valueEur != null ? formatEur(valueEur) : '—'}</div>
+                <div class="value-main"${valueEur != null ? ` data-num="holding-${key}" data-value="${valueEur}" data-format="eur"` : ''}>${valueEur != null ? formatEur(valueEur) : '—'}</div>
                 <span class="holding-shares">${stock.shares} shares</span>
               </div>
             </div>
@@ -1160,15 +1413,21 @@
         }).join('')}
       </div>
     `;
+    animateNumbers(list);
   }
 
-  async function loadHoldings() {
+  async function loadHoldings({ fromCache = false } = {}) {
     try {
-      const [, holdingsResp] = await Promise.all([
-        fetchExchangeRates(),
-        fetch(`/api/holdings${otherBrokersQueryParam()}`),
-      ]);
-      const data = await holdingsResp.json();
+      const url = `/api/holdings${otherBrokersQueryParam()}`;
+      let data;
+      if (fromCache) {
+        data = readCache(url);
+        const rates = readCache('/api/exchange-rates');
+        if (rates?.rates) state.exchangeRates = { ...state.exchangeRates, ...rates.rates };
+        if (!data) return;
+      } else {
+        [, data] = await Promise.all([fetchExchangeRates(), fetchJson(url)]);
+      }
       state.holdings = data.holdings || [];
       renderHoldings();
       if (state.latestPortfolioSummary) renderSummary(state.latestPortfolioSummary);
@@ -1253,10 +1512,29 @@
     });
   }
 
+  // Segmented controls draw one indicator that glides to the active button.
+  const observedSegs = new WeakSet();
+
+  function syncSegIndicator(seg) {
+    if (!seg) return;
+    if (!observedSegs.has(seg)) {
+      observedSegs.add(seg);
+      new ResizeObserver(() => syncSegIndicator(seg)).observe(seg);
+    }
+    const active = seg.querySelector('button.active');
+    if (!active || !active.offsetWidth) return;
+    const first = !seg.classList.contains('has-indicator');
+    seg.classList.add('has-indicator');
+    seg.style.setProperty('--seg-x', `${active.offsetLeft}px`);
+    seg.style.setProperty('--seg-w', `${active.offsetWidth}px`);
+    if (first) requestAnimationFrame(() => seg.classList.add('is-ready'));
+  }
+
   function renderChartRangeButtons() {
     $('chart-range-selector').innerHTML = CHART_RANGES.map((key) => `
       <button type="button" class="${key === state.selectedChartRange ? 'active' : ''}" data-range="${key}">${key}</button>
     `).join('');
+    syncSegIndicator($('chart-range-selector'));
   }
 
   function renderLotRangeButtons() {
@@ -1269,6 +1547,7 @@
     el.innerHTML = ranges.map((key) => `
       <button type="button" class="${key === state.selectedPerfRange ? 'active' : ''}" data-range="${key}">${key}</button>
     `).join('');
+    syncSegIndicator(el);
   }
 
   function applyChartRange() {
@@ -1467,6 +1746,7 @@
     state.chartRangeOffset = offset;
     renderChartRangeButtons();
     valuationChart.hoverIndex = null;
+    startChartReveal(valuationChart);
     selectGraphDate(windowEndDate(), { immediate: true });
   }
 
@@ -1475,6 +1755,7 @@
     if ((delta < 0 && !win.canPrev) || (delta > 0 && !win.canNext)) return;
     state.chartRangeOffset = Math.min(0, state.chartRangeOffset + delta);
     valuationChart.hoverIndex = null;
+    startChartReveal(valuationChart);
     selectGraphDate(windowEndDate(), { immediate: true });
   }
 
@@ -1488,6 +1769,7 @@
       if (!bounds.shiftable || target > bounds.start || (bounds.calendar && target >= bounds.start)) break;
       offset -= 1;
     }
+    if (offset !== state.chartRangeOffset) startChartReveal(valuationChart);
     state.chartRangeOffset = offset;
     selectGraphDate(target, { immediate: true });
   }
@@ -1510,25 +1792,16 @@
     const openPnl = openCost != null ? value - openCost : null;
     const openPct = openCost > 0 ? (openPnl / openCost) * 100 : null;
 
-    header.innerHTML = `
-      <div class="tt-header">
-        <div>
-          <div class="stat-label">Portfolio value</div>
-          <div class="tt-header-value">${formatEur(value)}</div>
-          ${period ? metricChangeHtml(period.eur, period.pct ?? 0, { horizon: win.label }) : ''}
-        </div>
-        <div>
-          <div class="stat-label">Net invested</div>
-          <div class="tt-header-value">${invested != null ? formatEur(invested) : '—'}</div>
-          ${metricChangeHtml(investedPnl, investedPct)}
-        </div>
-        <div>
-          <div class="stat-label">Open positions</div>
-          <div class="tt-header-value">${openCost != null ? formatEur(openCost) : '—'}</div>
-          ${metricChangeHtml(openPnl, openPct)}
-        </div>
-      </div>
-    `;
+    header.innerHTML = summaryHtml({
+      label: 'Portfolio value',
+      value,
+      change: period ? { ...period, horizon: win.label } : null,
+      secondary: [
+        { kind: 'invested', label: 'Invested', value: invested, eur: investedPnl, pct: investedPct },
+        { kind: 'open', label: 'Open', value: openCost, eur: openPnl, pct: openPct },
+      ],
+    });
+    setCompactHeader('graph', value, period ? { ...period, horizon: win.label } : null);
   }
 
   function formatPagerDate(date, withYear = true) {
@@ -1601,6 +1874,36 @@
     }
   }
 
+  // Issuer mark for a position: known fund houses get their own tint and
+  // short name, anything else its initials on a hue derived from the name.
+  const ISSUER_MARKS = [
+    [/ishares/i, 'iS', 215, 16],
+    [/amundi|lyxor/i, 'Am', 205, 70],
+    [/vanguard/i, 'V', 355, 60],
+    [/xtrackers|db x-trackers/i, 'Xt', 160, 55],
+    [/spdr/i, 'SP', 35, 75],
+    [/invesco/i, 'In', 265, 55],
+    [/wisdomtree/i, 'WT', 25, 70],
+    [/vaneck/i, 'VE', 5, 60],
+  ];
+
+  function positionAvatar(name) {
+    const text = String(name || '');
+    const known = ISSUER_MARKS.find(([pattern]) => pattern.test(text));
+    let mark;
+    let hue;
+    let sat;
+    if (known) {
+      [, mark, hue, sat] = known;
+    } else {
+      const words = text.replace(/[^A-Za-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+      mark = (words.length > 1 ? words[0][0] + words[1][0] : (words[0] || '?').slice(0, 2)).toUpperCase();
+      hue = [...text].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) % 360, 7);
+      sat = 45;
+    }
+    return `<span class="position-avatar" style="--avatar-h: ${hue}; --avatar-s: ${sat}%" aria-hidden="true">${escapeHtml(mark)}</span>`;
+  }
+
   function isTracker(h) {
     return TRACKER_KEYWORDS.some((kw) => (h.name || '').toLowerCase().includes(kw.toLowerCase()));
   }
@@ -1619,9 +1922,12 @@
         : '';
       return `
         <div class="tt-holding-row is-clickable" data-perf-key="${h.is_manual ? 'm' : 's'}-${h.id}">
-          <div>
-            <div class="tt-holding-name">${escapeHtml(h.name)}</div>
-            <div class="tt-holding-meta">${escapeHtml(h.exchange || '')} · ${priceStr} × ${formatShares(h.shares)}</div>
+          <div class="with-avatar">
+            ${positionAvatar(h.name)}
+            <div class="with-avatar-text">
+              <div class="tt-holding-name">${escapeHtml(h.name)}</div>
+              <div class="tt-holding-meta">${escapeHtml(h.exchange || '')} · ${priceStr} × ${formatShares(h.shares)}</div>
+            </div>
           </div>
           <div class="tt-holding-right">
             <div class="tt-holding-value">${h.total_value_eur != null ? formatEur(h.total_value_eur) : '—'}</div>
@@ -1658,11 +1964,11 @@
     ].join('');
   }
 
-  async function loadPortfolioValuationChart() {
+  async function loadPortfolioValuationChart({ fromCache = false } = {}) {
     try {
-      const resp = await fetch(`/api/portfolio-valuation-history${otherBrokersQueryParam()}`);
-      const data = await resp.json();
-      if (!data.dates?.length) return false;
+      const url = `/api/portfolio-valuation-history${otherBrokersQueryParam()}`;
+      const data = fromCache ? readCache(url) : await fetchJson(url);
+      if (!data?.dates?.length) return false;
 
       const previous = state.latestPortfolioHistoryData;
       const followLatest = !previous
@@ -1679,6 +1985,7 @@
         ? windowEndDate(win)
         : state.selectedHistoryDate;
       state.selectedHistoryDate = null;
+      if (!previous) startChartReveal(valuationChart);
       selectGraphDate(date, { immediate: true });
       return true;
     } catch (err) {
@@ -1767,6 +2074,7 @@
     const empty = !state.hasData;
     $('empty-state').style.display = empty ? 'flex' : 'none';
     $('overview-content').style.display = empty ? 'none' : 'block';
+    updateCompactHeader();
   }
 
   async function uploadFile(input, endpoint, startMessage) {
@@ -2173,6 +2481,7 @@
       const resp = await fetch('/api/purge-database', { method: 'POST' });
       const result = await resp.json();
       if (result.success) {
+        clearCache();
         showToast('Database purged — reloading…', true);
         setTimeout(() => window.location.reload(), 1200);
       } else {
@@ -2374,9 +2683,12 @@
               <div class="perf-holding-row">
                 <button class="perf-chevron${collapsed ? ' collapsed' : ''}" type="button" data-perf-toggle="${h.key}" aria-label="${collapsed ? 'Expand purchases' : 'Collapse purchases'}"><span>▾</span></button>
                 <button class="perf-holding-head" type="button" data-perf-select="${h.key}">
-                  <div>
-                    <div class="perf-holding-name">${escapeHtml(h.name)}</div>
-                    <div class="perf-holding-meta">${meta}</div>
+                  <div class="with-avatar">
+                    ${positionAvatar(h.name)}
+                    <div class="with-avatar-text">
+                      <div class="perf-holding-name">${escapeHtml(h.name)}</div>
+                      <div class="perf-holding-meta">${meta}</div>
+                    </div>
                   </div>
                   <div class="perf-holding-right">
                     <div class="perf-holding-pct ${numberClass(h.gain_pct)}">${h.gain_pct != null ? formatPct(h.gain_pct) : '—'}</div>
@@ -2453,6 +2765,7 @@
         mode: 'lot',
       };
       renderLotRangeButtons();
+      startChartReveal(lotChart);
       lotChart.draw();
     } catch (err) {
       console.error('Failed to load lot chart', err);
@@ -2479,6 +2792,7 @@
         mode: 'position',
       };
       renderLotRangeButtons();
+      startChartReveal(lotChart);
       lotChart.draw();
     } catch (err) {
       console.error('Failed to load position chart', err);
@@ -2554,24 +2868,131 @@
     requestAnimationFrame(() => lotChart.draw());
   }
 
-  function closePerformanceOverlay({ fromHistory = false } = {}) {
+  // On phones the detail is a sheet that grows out of the tapped row and
+  // shrinks back into it; dragging the header down dismisses it.
+  const SHEET_EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
+  let sheetClosing = null;
+
+  function sheetMotionAllowed() {
+    return isCompactView() && !window.matchMedia('(prefers-reduced-motion: reduce)').matches && Boolean(Element.prototype.animate);
+  }
+
+  function rowClipInSheet(sheet, trigger) {
+    if (!trigger?.isConnected) return null;
+    const row = trigger.getBoundingClientRect();
+    if (!row.height || row.bottom < 0 || row.top > window.innerHeight) return null;
+    const box = sheet.getBoundingClientRect();
+    const inset = [row.top - box.top, box.right - row.right, box.bottom - row.bottom, row.left - box.left]
+      .map((v) => `${Math.max(0, v)}px`).join(' ');
+    return `inset(${inset} round 12px)`;
+  }
+
+  function animateSheetIn(sheet, overlay, trigger) {
+    if (!sheetMotionAllowed()) return;
+    const from = rowClipInSheet(sheet, trigger);
+    overlay.animate([{ backgroundColor: 'rgb(0 0 0 / 0)' }, {}], { duration: 320, easing: 'ease-out' });
+    if (from) {
+      sheet.animate(
+        [{ clipPath: from, opacity: 0.55 }, { clipPath: 'inset(0 0 0 0 round 16px 16px 0 0)', opacity: 1 }],
+        { duration: 400, easing: SHEET_EASE },
+      );
+    } else {
+      sheet.animate([{ transform: 'translateY(100%)' }, { transform: 'translateY(0)' }], { duration: 380, easing: SHEET_EASE });
+    }
+  }
+
+  function animateSheetOut(sheet, overlay, trigger, dragOffset) {
+    if (!sheetMotionAllowed()) return null;
+    const to = dragOffset ? null : rowClipInSheet(sheet, trigger);
+    overlay.animate([{}, { backgroundColor: 'rgb(0 0 0 / 0)' }], { duration: 260, easing: 'ease-in', fill: 'forwards' });
+    if (to) {
+      return sheet.animate(
+        [{ clipPath: 'inset(0 0 0 0 round 16px 16px 0 0)', opacity: 1 }, { clipPath: to, opacity: 0 }],
+        { duration: 300, easing: SHEET_EASE, fill: 'forwards' },
+      );
+    }
+    return sheet.animate(
+      [{ transform: `translateY(${dragOffset || 0}px)` }, { transform: 'translateY(100%)' }],
+      { duration: 260, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' },
+    );
+  }
+
+  function finishSheetClose() {
+    if (sheetClosing) sheetClosing();
+  }
+
+  function closePerformanceOverlay({ fromHistory = false, dragOffset = 0 } = {}) {
     if (!state.perfOverlayOpen) return;
     const shouldPopHistory = state.perfOverlayHistoryEntry && !fromHistory;
     const trigger = state.perfOverlayTrigger;
     const detailPanel = document.querySelector('.panel-lot-detail');
+    const overlay = $('performance-overlay');
+    const sheet = $('performance-overlay-sheet');
 
     state.perfOverlayOpen = false;
     state.perfOverlayHistoryEntry = false;
     state.perfOverlayTrigger = null;
-    $('performance-overlay').classList.remove('show', 'is-preparing', 'is-ready');
-    $('performance-overlay').setAttribute('aria-hidden', 'true');
-    document.body.classList.remove('performance-overlay-open');
-    document.querySelector('.app').inert = false;
-    $('perf-layout').appendChild(detailPanel);
-    setPerfExpanded(false);
-
     if (shouldPopHistory) history.back();
-    requestAnimationFrame(() => trigger?.focus?.({ preventScroll: true }));
+
+    let done = false;
+    const teardown = () => {
+      if (done) return;
+      done = true;
+      sheetClosing = null;
+      sheet.getAnimations().forEach((anim) => anim.cancel());
+      overlay.getAnimations().forEach((anim) => anim.cancel());
+      sheet.style.transform = '';
+      sheet.style.transition = '';
+      overlay.classList.remove('show', 'is-preparing', 'is-ready');
+      overlay.setAttribute('aria-hidden', 'true');
+      document.body.classList.remove('performance-overlay-open');
+      document.querySelector('.app').inert = false;
+      $('perf-layout').appendChild(detailPanel);
+      setPerfExpanded(false);
+      requestAnimationFrame(() => trigger?.focus?.({ preventScroll: true }));
+    };
+
+    sheet.style.transition = '';
+    sheet.style.transform = '';
+    const anim = animateSheetOut(sheet, overlay, trigger, dragOffset);
+    if (!anim) {
+      teardown();
+      return;
+    }
+    sheetClosing = teardown;
+    anim.finished.then(teardown, teardown);
+  }
+
+  function bindSheetDrag() {
+    const overlay = $('performance-overlay');
+    const sheet = $('performance-overlay-sheet');
+    let drag = null;
+    sheet.addEventListener('pointerdown', (e) => {
+      if (!state.perfOverlayOpen || !isCompactView() || e.pointerType === 'mouse' || overlay.scrollTop > 0) return;
+      if (!e.target.closest('.panel-header') || e.target.closest('button')) return;
+      drag = { id: e.pointerId, y0: e.clientY, t0: performance.now(), dy: 0 };
+      sheet.style.transition = 'none';
+    });
+    window.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const raw = e.clientY - drag.y0;
+      drag.dy = raw > 0 ? raw : raw / 6;
+      sheet.style.transform = `translateY(${drag.dy}px)`;
+    }, { passive: true });
+    const end = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const { dy, t0 } = drag;
+      drag = null;
+      const velocity = dy / Math.max(1, performance.now() - t0);
+      if (dy > 110 || (dy > 30 && velocity > 0.6)) {
+        closePerformanceOverlay({ dragOffset: dy });
+        return;
+      }
+      sheet.style.transition = 'transform 280ms var(--motion-spring)';
+      sheet.style.transform = '';
+    };
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
   }
 
   async function openHoldingPerformance(key, trigger = null) {
@@ -2581,6 +3002,7 @@
       holding = state.performanceHoldings.find((item) => item.key === key);
     }
     if (!holding) return;
+    finishSheetClose();
 
     state.perfOverlayTrigger = trigger || document.activeElement;
     state.perfOverlayOpen = true;
@@ -2605,6 +3027,7 @@
         if (!state.perfOverlayOpen) return;
         overlay.classList.remove('is-preparing');
         overlay.classList.add('is-ready');
+        animateSheetIn(sheet, overlay, state.perfOverlayTrigger);
         sheet.focus({ preventScroll: true });
         lotChart.draw();
       });
@@ -2613,10 +3036,11 @@
     if (state.perfOverlayOpen) requestAnimationFrame(() => lotChart.draw());
   }
 
-  async function loadPerformance() {
+  async function loadPerformance({ fromCache = false } = {}) {
     try {
-      const resp = await fetch(`/api/performance${otherBrokersQueryParam()}`);
-      const data = await resp.json();
+      const url = `/api/performance${otherBrokersQueryParam()}`;
+      const data = fromCache ? readCache(url) : await fetchJson(url);
+      if (!data) return;
       state.performanceHoldings = data.holdings || [];
       if (state.selectedLotId && !findLot(state.selectedLotId)) state.selectedLotId = null;
       if (state.selectedHoldingKey && !state.performanceHoldings.some((h) => h.key === state.selectedHoldingKey)) {
@@ -2747,6 +3171,7 @@
       state.selectedPerfRange = btn.dataset.range;
       renderLotRangeButtons();
       lotChart.hoverIndex = null;
+      startChartReveal(lotChart);
       lotChart.draw();
     });
     $('perf-expand-btn').addEventListener('click', () => {
@@ -2826,11 +3251,10 @@
     });
     $('holding-change-mode').addEventListener('click', (e) => {
       const btn = e.target.closest('[data-mode]');
-      if (!btn || btn.dataset.mode === state.holdingChangeMode) return;
-      state.holdingChangeMode = btn.dataset.mode;
-      localStorage.setItem('holdingChangeMode', state.holdingChangeMode);
-      renderHoldingChangeMode();
-      renderHoldings();
+      if (btn) setChangeMode(btn.dataset.mode);
+    });
+    document.addEventListener('click', (e) => {
+      if (e.target.closest('[data-toggle-change-mode]')) setChangeMode(state.holdingChangeMode === 'eur' ? 'pct' : 'eur');
     });
     $('holdings-list').addEventListener('click', (e) => {
       const row = e.target.closest('[data-perf-key]');
@@ -2891,9 +3315,24 @@
     initTheme();
     bindEvents();
     bindTouchFeedback();
+    bindSheetDrag();
     renderHoldingChangeMode();
     renderLotRangeButtons();
     setInterval(checkServerStatus, 5000);
+
+    initIncludeOtherBrokers();
+    const [cachedSummary, cachedChart] = await Promise.all([
+      loadPortfolioSummary({ fromCache: true }),
+      loadPortfolioValuationChart({ fromCache: true }),
+      loadHoldings({ fromCache: true }),
+      loadPerformance({ fromCache: true }),
+    ]);
+    const hydrated = Boolean(cachedSummary || cachedChart);
+    if (hydrated) {
+      state.hasData = true;
+      updateEmptyState();
+      setLoading('', false);
+    }
 
     const online = await checkServerStatus();
     if (!online) {
@@ -2904,7 +3343,7 @@
     await fetchServerConfig();
     initIncludeOtherBrokers();
     await loadUserPreferences();
-    setLoading('Loading holdings, summary, and history…', true);
+    if (!hydrated) setLoading('Loading holdings, summary, and history…', true);
 
     const [summary, chartOk] = await Promise.all([
       loadPortfolioSummary(),
