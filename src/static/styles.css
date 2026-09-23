@@ -389,8 +389,58 @@ html.dark .brand-mark {
 }
 
 .topbar-title {
+  position: relative;
   min-width: 0;
   flex: 1;
+}
+
+.topbar-title h1,
+.topbar-title p {
+  transition: opacity 180ms ease, transform 220ms var(--motion-spring);
+}
+
+.topbar-compact {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  max-width: 100%;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(calc(-50% + 0.4rem));
+  transition: opacity 180ms ease, transform 220ms var(--motion-spring);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.topbar-compact-value {
+  font-size: 0.9375rem;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+.topbar-compact-change {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.topbar-compact-change em {
+  color: var(--muted-foreground);
+  font-style: normal;
+  font-weight: 550;
+}
+
+.topbar.is-compact .topbar-title h1,
+.topbar.is-compact .topbar-title p {
+  opacity: 0;
+  transform: translateY(-0.4rem);
+}
+
+.topbar.is-compact .topbar-compact {
+  opacity: 1;
+  transform: translateY(-50%);
 }
 
 .topbar-title h1 {
@@ -768,6 +818,19 @@ html.dark .brand-mark {
   font-variant-numeric: tabular-nums;
 }
 
+.cents {
+  margin-left: 0.02em;
+  font-size: 0.6em;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  opacity: 0.5;
+}
+
+.summary-item-value .cents {
+  font-size: 0.72em;
+  opacity: 0.6;
+}
+
 .summary-change {
   display: flex;
   flex-wrap: wrap;
@@ -903,6 +966,38 @@ html.dark .brand-mark {
   box-shadow: 0 0 0 1px var(--border);
 }
 
+.seg.has-indicator {
+  position: relative;
+  isolation: isolate;
+}
+
+.seg.has-indicator::before {
+  position: absolute;
+  top: 0.125rem;
+  bottom: 0.125rem;
+  left: 0;
+  z-index: -1;
+  width: var(--seg-w, 0);
+  border-radius: var(--control-radius);
+  background: var(--card);
+  box-shadow: 0 0 0 1px var(--border), 0 1px 2px rgb(0 0 0 / 12%);
+  content: "";
+  transform: translateX(var(--seg-x, 0));
+}
+
+.seg.has-indicator.is-ready::before {
+  transition: transform 280ms var(--motion-spring), width 280ms var(--motion-spring);
+}
+
+.seg.has-indicator button.active {
+  background: transparent;
+  box-shadow: none;
+}
+
+.seg button {
+  transition: color 160ms ease;
+}
+
 .chart-shell {
   display: flex;
   flex-direction: column;
@@ -951,6 +1046,46 @@ html.dark .brand-mark {
   width: 100%;
   height: 100%;
   cursor: crosshair;
+}
+
+/* "Now" marker at the end of the live series; the ring breathes slowly. */
+.chart-live-dot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.chart-live-dot[hidden] {
+  display: none;
+}
+
+.chart-live-dot::before,
+.chart-live-dot::after {
+  position: absolute;
+  top: -4px;
+  left: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--primary);
+  content: "";
+}
+
+.chart-live-dot::before {
+  box-shadow: 0 0 0 2px var(--card);
+}
+
+.chart-live-dot::after {
+  animation: live-dot-pulse 2.4s cubic-bezier(0.2, 0.7, 0.3, 1) infinite;
+}
+
+@keyframes live-dot-pulse {
+  0% { opacity: 0.55; transform: scale(1); }
+  70%, 100% { opacity: 0; transform: scale(3.2); }
 }
 
 .chart-tooltip {
@@ -1280,6 +1415,38 @@ th.num {
 
 .holding-info {
   min-width: 0;
+}
+
+.with-avatar {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+.with-avatar-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.position-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  background: hsl(var(--avatar-h) var(--avatar-s) 55% / 0.16);
+  box-shadow: inset 0 0 0 1px hsl(var(--avatar-h) var(--avatar-s) 62% / 0.2);
+  color: hsl(var(--avatar-h) var(--avatar-s) 74%);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+html:not(.dark) .position-avatar {
+  background: hsl(var(--avatar-h) var(--avatar-s) 50% / 0.12);
+  color: hsl(var(--avatar-h) var(--avatar-s) 34%);
 }
 
 .broker-row {
@@ -2319,9 +2486,11 @@ html.dark .dialog {
     overflow: hidden;
   }
 
+  /* clip, not hidden: hidden would turn .app into a scroll container and
+     stop the top bar from sticking. */
   .app {
     display: block;
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   .workspace {
@@ -2791,6 +2960,16 @@ html.dark .dialog {
     align-self: center;
   }
 
+  .position-avatar {
+    width: 1.75rem;
+    height: 1.75rem;
+    font-size: 0.625rem;
+  }
+
+  .with-avatar {
+    gap: 0.6rem;
+  }
+
   .holding-name {
     font-size: 0.75rem;
     line-height: 1.2;
@@ -2951,10 +3130,10 @@ html.dark .dialog {
   }
 
   .performance-overlay {
-    padding: 0;
-    background: var(--background);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
+    padding: calc(env(safe-area-inset-top) + 0.6rem) 0 0;
+    background: rgb(0 0 0 / 45%);
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
   }
 
   .performance-sheet {
@@ -2963,22 +3142,35 @@ html.dark .dialog {
     left: 0;
     width: auto;
     max-width: none;
-    min-height: 100dvh;
+    min-height: calc(100dvh - env(safe-area-inset-top) - 0.6rem);
     margin: 0;
+    overflow: clip;
+    border-radius: 16px 16px 0 0;
     animation: none;
+    will-change: transform;
   }
 
   .performance-overlay.show.is-ready .performance-sheet {
-    animation: mobile-detail-in 180ms ease-out both;
+    animation: none;
   }
 
-  @keyframes mobile-detail-in {
-    from { opacity: 0; }
-    to { opacity: 1; }
+  /* Grab handle; the sticky header below it is the drag area. */
+  .performance-sheet::before {
+    position: absolute;
+    top: 0.4rem;
+    left: 50%;
+    z-index: 3;
+    width: 2.25rem;
+    height: 0.25rem;
+    margin-left: -1.125rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--foreground) 22%, transparent);
+    content: "";
+    pointer-events: none;
   }
 
   .performance-overlay .panel-lot-detail {
-    min-height: 100dvh;
+    min-height: inherit;
     border: 0;
     border-radius: 0;
     box-shadow: none;
@@ -2988,9 +3180,11 @@ html.dark .dialog {
     position: sticky;
     top: 0;
     z-index: 2;
-    background: color-mix(in srgb, var(--background) 88%, transparent);
+    padding-top: 1rem;
+    background: color-mix(in srgb, var(--card) 90%, transparent);
     -webkit-backdrop-filter: blur(14px) saturate(120%);
     backdrop-filter: blur(14px) saturate(120%);
+    touch-action: none;
   }
 
   .performance-overlay .panel-body {

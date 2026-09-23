@@ -69,6 +69,7 @@
         <div class="topbar-title">
           <h1 id="view-title">Overview</h1>
           <p id="view-subtitle">Live value, invested capital, and P/L</p>
+          <div class="topbar-compact" id="topbar-compact" aria-hidden="true"></div>
         </div>
         <div class="topbar-actions">
           <label class="broker-toggle" title="Include other-broker holdings">
@@ -164,6 +165,7 @@
                 </div>
                 <div class="chart-canvas-wrap" id="chart-canvas-wrap">
                   <canvas id="valuation-canvas"></canvas>
+                  <span class="chart-live-dot" id="chart-live-dot" aria-hidden="true" hidden></span>
                   <div class="chart-tooltip" id="chart-tooltip" hidden></div>
                 </div>
               </div>
