@@ -22,7 +22,6 @@
       current_profit_loss: true,
       total_profit_loss: true,
     },
-    ttSectionStates: { 'tt-stocks': false, 'tt-trackers': false, 'tt-other-brokers': false },
     performanceHoldings: [],
     perfCollapsed: {},
     perfGroupCollapsed: { closed: true },
@@ -204,6 +203,7 @@
     renderHoldings();
     if (state.latestPortfolioSummary) renderSummary(state.latestPortfolioSummary);
     renderGraphHeader();
+    renderTimeTravel();
   }
 
   function holdingsDayChange() {
@@ -1120,29 +1120,43 @@
     },
   };
 
-  function initTheme() {
-    const saved = localStorage.getItem('degiro-theme');
-    let theme = 'light';
-    if (saved === 'dark' || saved === 'light') theme = saved;
-    else if (window.matchMedia?.('(prefers-color-scheme: dark)').matches) theme = 'dark';
-    setTheme(theme, false);
+  // The theme follows the device unless Settings pins light or dark.
+  const systemDark = window.matchMedia?.('(prefers-color-scheme: dark)');
+
+  // A new key: the old toggle stored whatever was showing, which was not a choice.
+  const THEME_KEY = 'degiro-theme-mode';
+
+  function themeMode() {
+    const saved = localStorage.getItem(THEME_KEY);
+    return saved === 'dark' || saved === 'light' ? saved : 'system';
   }
 
-  function setTheme(theme, relayout = true) {
-    document.documentElement.classList.toggle('dark', theme === 'dark');
-    localStorage.setItem('degiro-theme', theme);
-    const icon = $('theme-icon');
-    if (icon) {
-      icon.innerHTML = theme === 'dark'
-        ? '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'
-        : '<path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/>';
-    }
+  function initTheme() {
+    applyTheme(false);
+    systemDark?.addEventListener?.('change', () => {
+      if (themeMode() === 'system') applyTheme();
+    });
+  }
+
+  function applyTheme(relayout = true) {
+    const mode = themeMode();
+    const dark = mode === 'dark' || (mode === 'system' && Boolean(systemDark?.matches));
+    document.documentElement.classList.toggle('dark', dark);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#18181b' : '#ffffff');
+    document.querySelectorAll('#theme-mode [data-theme-mode]').forEach((btn) => {
+      const active = btn.dataset.themeMode === mode;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', String(active));
+    });
+    syncSegIndicator($('theme-mode'));
     if (relayout) applyThemeToChart();
   }
 
-  function toggleTheme() {
-    const dark = document.documentElement.classList.contains('dark');
-    setTheme(dark ? 'light' : 'dark');
+  function setThemeMode(mode) {
+    localStorage.removeItem('degiro-theme');
+    if (mode === 'system') localStorage.removeItem(THEME_KEY);
+    else localStorage.setItem(THEME_KEY, mode);
+    applyTheme();
   }
 
   function applyThemeToChart() {
@@ -1358,12 +1372,15 @@
   }
 
   function renderHoldingChangeMode() {
-    document.querySelectorAll('#holding-change-mode [data-mode]').forEach((btn) => {
-      const active = btn.dataset.mode === state.holdingChangeMode;
-      btn.classList.toggle('active', active);
-      btn.setAttribute('aria-pressed', String(active));
+    // Overview and Graph each carry the switch; both follow the one preference.
+    document.querySelectorAll('.change-mode').forEach((seg) => {
+      seg.querySelectorAll('[data-mode]').forEach((btn) => {
+        const active = btn.dataset.mode === state.holdingChangeMode;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', String(active));
+      });
+      syncSegIndicator(seg);
     });
-    syncSegIndicator($('holding-change-mode'));
   }
 
   function renderHoldings() {
@@ -1630,36 +1647,24 @@
       container.innerHTML = '<div class="muted-empty">No history yet.</div>';
       return;
     }
+    // Four columns on wide screens; on a phone each row folds to two lines
+    // (period over value, euro change over percent) so nothing scrolls sideways.
     container.innerHTML = `
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Period</th>
-              <th class="num">Portfolio value</th>
-              <th class="num">Gain / loss</th>
-              <th class="num">Gain / loss %</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows.map((row) => {
-              if (row.type === 'year') {
-                return `<tr class="history-year-row">
-                  <td>${row.year} Total</td>
-                  <td class="num">${formatEur(row.value)}</td>
-                  <td class="num ${numberClass(row.gainLoss)}">${formatSignedEur(row.gainLoss)}</td>
-                  <td class="num ${numberClass(row.gainLossPct)}">${formatPct(row.gainLossPct)}</td>
-                </tr>`;
-              }
-              return `<tr>
-                <td>${formatPortfolioMonth(row.date)}</td>
-                <td class="num">${formatEur(row.value)}</td>
-                <td class="num ${numberClass(row.gainLoss)}">${formatSignedEur(row.gainLoss)}</td>
-                <td class="num ${numberClass(row.gainLossPct)}">${formatPct(row.gainLossPct)}</td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
+      <div class="history-list" role="table" aria-label="Month-close history">
+        <div class="history-row history-head" role="row">
+          <span role="columnheader">Period</span>
+          <span role="columnheader" class="num">Portfolio value</span>
+          <span role="columnheader" class="num">Gain / loss</span>
+          <span role="columnheader" class="num">Return</span>
+        </div>
+        ${rows.map((row) => `
+          <div class="history-row${row.type === 'year' ? ' history-year-row' : ''}" role="row">
+            <span role="cell" class="history-period">${row.type === 'year' ? `${row.year} total` : formatPortfolioMonth(row.date)}</span>
+            <span role="cell" class="num history-value">${formatEur(row.value)}</span>
+            <span role="cell" class="num history-gain ${numberClass(row.gainLoss)}">${formatSignedEur(row.gainLoss)}</span>
+            <span role="cell" class="num history-pct ${numberClass(row.gainLossPct)}">${row.gainLossPct != null ? formatPct(row.gainLossPct) : '—'}</span>
+          </div>
+        `).join('')}
       </div>
     `;
   }
@@ -1931,60 +1936,94 @@
     return TRACKER_KEYWORDS.some((kw) => (h.name || '').toLowerCase().includes(kw.toLowerCase()));
   }
 
-  function renderTimeTravel(data) {
+  function renderTimeTravel(data = state.timeTravelData) {
     const container = $('tt-content');
+    if (!data) return;
+    state.timeTravelData = data;
     if (!data.holdings?.length) {
       container.innerHTML = '<div class="muted-empty">No holdings on this date.</div>';
       return;
     }
 
+    const horizon = data.from ? graphWindow().label : null;
+    const open = data.holdings.filter((h) => !h.closed);
+    const totalValue = open.reduce((sum, h) => sum + (h.total_value_eur || 0), 0);
+    const arrowPct = (pct) => `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(2)}%`;
+
+    // Same row as the overview: position, then the instrument's own move over
+    // the period next to its price, then what the shares still held made.
     const renderRow = (h) => {
-      const priceStr = h.price != null ? formatPrice(h.price, h.currency) : '—';
-      const changeHtml = h.period_change_eur != null
-        ? `<div class="tt-holding-change ${numberClass(h.period_change_eur)}">${formatSignedEur(h.period_change_eur)}${h.period_change_pct != null ? ` <span class="tt-holding-pct">${formatPct(h.period_change_pct)}</span>` : ''}</div>`
+      const key = `${h.is_manual ? 'm' : 's'}-${h.id}${h.closed ? '-sold' : ''}`;
+      const weight = totalValue > 0 && !h.closed ? ((h.total_value_eur || 0) / totalValue) * 100 : 0;
+      const stockChange = h.price_change_pct != null
+        ? `<span class="price-change ${numberClass(h.price_change_pct)}" title="The ${escapeHtml(positionTitle(h.name))} price over ${escapeHtml(horizon || 'the period')}">${arrowPct(h.price_change_pct)}</span>`
         : '';
+      const sold = h.period_sold;
+      // One figure, following the shared %/€ switch like the overview rows.
+      const gain = h.closed ? { eur: sold?.eur, pct: sold?.pct } : { eur: h.period_change_eur, pct: h.period_change_pct };
+      const shown = state.holdingChangeMode === 'eur' || gain.pct == null
+        ? (gain.eur != null ? formatSignedEur(gain.eur) : null)
+        : formatPct(gain.pct);
+      const change = shown
+        ? `<span class="holding-change ${numberClass(gain.eur ?? gain.pct)}" title="${gain.eur != null ? formatSignedEur(gain.eur) : ''}${gain.pct != null ? ` · ${formatPct(gain.pct)}` : ''}">${shown}</span>`
+        : '';
+      const meta = [
+        escapeHtml(h.exchange || h.symbol || ''),
+        h.closed ? null : `${formatShares(h.shares)} sh`,
+      ].filter(Boolean).join(' · ');
       return `
-        <div class="tt-holding-row is-clickable" data-perf-key="${h.is_manual ? 'm' : 's'}-${h.id}">
-          <div class="with-avatar">
+        <div class="holding-row is-clickable${h.closed ? ' is-closed' : ''}" data-perf-key="${key}" style="--weight: ${weight.toFixed(2)}%">
+          <div class="holding-info with-avatar">
             ${positionAvatar(h.name)}
             <div class="with-avatar-text">
-              <div class="tt-holding-name" title="${escapeHtml(h.name)}">${escapeHtml(positionTitle(h.name))}</div>
-              <div class="tt-holding-meta">${escapeHtml(h.exchange || '')} · ${priceStr} × ${formatShares(h.shares)}</div>
+              <div class="holding-name" title="${escapeHtml(h.name)}">${escapeHtml(positionTitle(h.name))}</div>
+              <div class="holding-meta">${meta}${stockChange ? `<span class="holding-meta-extra"> · stock ${stockChange}</span>` : ''}</div>
             </div>
           </div>
-          <div class="tt-holding-right">
-            <div class="tt-holding-value">${h.total_value_eur != null ? formatEur(h.total_value_eur) : '—'}</div>
-            ${changeHtml}
+          <div class="holding-price">
+            <div class="price-main">${h.price != null ? formatPrice(h.price, h.currency) : '—'}</div>
+            ${stockChange}
+          </div>
+          <div class="holding-value">
+            <div class="value-main">${h.closed ? '<span class="muted">Sold</span>' : h.total_value_eur != null ? formatEur(h.total_value_eur) : '—'}</div>
+            ${change}
           </div>
         </div>
       `;
     };
 
-    const renderSection = (title, items, id) => {
+    const renderGroup = (title, items) => {
       if (!items.length) return '';
-      const collapsed = state.ttSectionStates[id] === true;
+      const value = items.reduce((sum, h) => sum + (h.total_value_eur || 0), 0);
       return `
-        <div class="tt-section">
-          <div class="tt-section-header" data-section="${id}">
-            <div class="tt-section-title">${title}</div>
-            <span class="tt-section-toggle ${collapsed ? 'collapsed' : ''}" id="${id}-toggle">▾</span>
-          </div>
-          <div class="tt-section-content ${collapsed ? 'collapsed' : ''}" id="${id}-content">
-            ${items.map(renderRow).join('')}
-          </div>
+        <div class="holdings-group">
+          <span>${title}</span>
+          ${value > 0 ? `<span>${formatEur(value)}</span>` : ''}
         </div>
+        ${items.map(renderRow).join('')}
       `;
     };
 
-    const manuals = data.holdings.filter((h) => h.is_manual);
-    const rest = data.holdings.filter((h) => !h.is_manual);
-    const stocks = rest.filter((h) => !isTracker(h));
-    const trackers = rest.filter(isTracker);
-    container.innerHTML = [
-      renderSection('Stocks', stocks, 'tt-stocks'),
-      renderSection("Trackers (ETF's)", trackers, 'tt-trackers'),
-      renderSection('Other brokers', manuals, 'tt-other-brokers'),
-    ].join('');
+    const kindOf = (h) => h.kind || (h.is_manual ? 'manual' : isTracker(h) ? 'tracker' : 'stock');
+    const groups = [
+      ['Stocks', open.filter((h) => kindOf(h) === 'stock')],
+      ['ETFs', open.filter((h) => kindOf(h) === 'tracker')],
+      ['Other brokers', open.filter((h) => kindOf(h) === 'manual')],
+      [`Sold ${horizon === 'YTD' ? 'this year' : `in ${horizon || 'period'}`}`, data.holdings.filter((h) => h.closed)],
+    ].filter(([, items]) => items.length);
+    // A single group needs no label; the panel already says what it is.
+    const labelled = groups.length > 1 || groups[0]?.[0].startsWith('Sold');
+
+    container.innerHTML = `
+      <div class="holdings-list tt-holdings">
+        <div class="holdings-head">
+          <span>Position</span>
+          <span style="text-align:right">${horizon ? `Stock ${escapeHtml(horizon)}` : 'Price'}</span>
+          <span style="text-align:right">${horizon ? `Value · ${escapeHtml(horizon)}` : 'Value'}</span>
+        </div>
+        ${labelled ? groups.map(([title, items]) => renderGroup(title, items)).join('') : groups.map(([, items]) => items.map(renderRow).join('')).join('')}
+      </div>
+    `;
   }
 
   async function loadPortfolioValuationChart({ fromCache = false } = {}) {
@@ -2179,6 +2218,7 @@
 
   function openSettings() {
     openOverlay('settings-overlay');
+    requestAnimationFrame(() => syncSegIndicator($('theme-mode')));
     loadGmailStatus();
   }
 
@@ -2667,6 +2707,47 @@
     `;
   }
 
+  // Purchases unfold under their position: the list renders at once, the
+  // height and chevron are eased from the old state to the new one.
+  function togglePerfLots(key) {
+    const opening = state.perfCollapsed[key] !== false;
+    const animate = Boolean(Element.prototype.animate)
+      && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const easing = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
+    const parts = () => {
+      const holding = document.getElementById(`perf-${key}`);
+      return { lots: holding?.querySelector('.perf-lots'), chevron: holding?.querySelector('.perf-chevron svg') };
+    };
+
+    if (opening) {
+      state.perfCollapsed[key] = false;
+      renderPerformance();
+      const { lots, chevron } = parts();
+      if (!animate || !lots) return;
+      lots.animate(
+        [{ height: '0px', opacity: 0 }, { height: `${lots.scrollHeight}px`, opacity: 1 }],
+        { duration: 260, easing },
+      );
+      chevron?.animate([{ transform: 'rotate(-90deg)' }, { transform: 'rotate(0deg)' }], { duration: 200, easing });
+      return;
+    }
+
+    const { lots, chevron } = parts();
+    const finish = () => {
+      state.perfCollapsed[key] = true;
+      renderPerformance();
+    };
+    if (!animate || !lots) {
+      finish();
+      return;
+    }
+    chevron?.animate([{ transform: 'rotate(0deg)' }, { transform: 'rotate(-90deg)' }], { duration: 200, easing, fill: 'forwards' });
+    lots.animate(
+      [{ height: `${lots.offsetHeight}px`, opacity: 1 }, { height: '0px', opacity: 0, marginBottom: '0px' }],
+      { duration: 220, easing, fill: 'forwards' },
+    ).finished.then(finish, finish);
+  }
+
   function renderPerformance() {
     const container = $('perf-holdings');
     const holdings = state.performanceHoldings;
@@ -2688,23 +2769,19 @@
       const groupTitle = group.id === 'closed'
         ? `<button class="perf-group-title perf-group-toggle${groupCollapsed ? ' collapsed' : ''}" type="button" data-perf-group-toggle="closed" aria-expanded="${groupCollapsed ? 'false' : 'true'}">
             <span>${group.title}</span>
-            <span class="perf-group-toggle-meta"><span class="perf-group-count">${group.items.length}</span><span class="perf-group-toggle-icon" aria-hidden="true">▾</span></span>
+            <span class="perf-group-toggle-meta"><span class="perf-group-count">${group.items.length}</span><svg class="perf-group-toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span>
           </button>`
         : `<div class="perf-group-title">${group.title}</div>`;
       const groupItems = groupCollapsed ? '' : group.items.map((h) => {
           const collapsed = state.perfCollapsed[h.key] !== false;
           const closed = h.kind === 'closed';
           const lots = [...(h.lots || [])].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-          const livePrice = !closed && h.latest_price != null
-            ? `live ${formatPrice(h.latest_price, h.currency)}`
-            : '';
           const meta = closed
-            ? `Sold · ${h.lots.length} purchase${h.lots.length === 1 ? '' : 's'} · realized`
-            : `${formatShareCount(h.shares)} · cost ${formatEur(h.cost_eur || 0)} · now ${h.value_eur != null ? formatEur(h.value_eur) : '—'}${livePrice ? ` · ${livePrice}` : ''}`;
+            ? `sold · ${h.lots.length} purchase${h.lots.length === 1 ? '' : 's'}`
+            : `${formatShares(h.shares)} sh · ${formatEur(h.cost_eur || 0)} → ${h.value_eur != null ? formatEur(h.value_eur) : '—'}`;
           return `
-            <div class="perf-holding" id="perf-${h.key}">
+            <div class="perf-holding${collapsed ? '' : ' is-open'}" id="perf-${h.key}">
               <div class="perf-holding-row">
-                <button class="perf-chevron${collapsed ? ' collapsed' : ''}" type="button" data-perf-toggle="${h.key}" aria-label="${collapsed ? 'Expand purchases' : 'Collapse purchases'}"><span>▾</span></button>
                 <button class="perf-holding-head" type="button" data-perf-select="${h.key}">
                   <div class="with-avatar">
                     ${positionAvatar(h.name)}
@@ -2718,6 +2795,9 @@
                     <div class="perf-holding-gain ${numberClass(h.gain_eur)}">${h.gain_eur != null ? formatSignedEur(h.gain_eur) : '—'}</div>
                   </div>
                 </button>
+                <button class="perf-chevron${collapsed ? ' collapsed' : ''}" type="button" data-perf-toggle="${h.key}" aria-expanded="${collapsed ? 'false' : 'true'}" aria-label="${collapsed ? 'Show purchases' : 'Hide purchases'}">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+                </button>
               </div>
               ${collapsed ? '' : `
                 <div class="perf-lots">
@@ -2729,10 +2809,15 @@
                     const costs = lot.costs_eur != null
                       ? Number(lot.costs_eur)
                       : (purchaseValue != null ? Math.max(0, Number(lot.cost_eur || 0) - purchaseValue) : null);
-                    const costsMeta = costs != null && costs > 0.004
-                      ? ` + <span class="perf-lot-fee" aria-label="Transaction fee ${formatCompactEur(costs)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3v18l2-1.5L10 21l2-1.5 2 1.5 2-1.5 2 1.5V3l-2 1.5L14 3l-2 1.5L10 3 8 4.5 6 3Z"/><path d="M9 9h6M9 13h6M9 17h3"/></svg><span aria-hidden="true">${formatCompactEur(costs)}</span></span>`
-                      : '';
-                    const totalMeta = ` = ${formatEur(lot.cost_eur || 0)}`;
+                    // "11 × €43.91 + €1 fee = €483.96": figures carry the line,
+                    // operators stay quiet, the total is the answer.
+                    const op = (sign) => `<i class="perf-lot-op">${sign}</i>`;
+                    const formula = [
+                      formatShares(lot.remaining_qty),
+                      ...(lot.buy_price != null ? [op('×'), formatPrice(lot.buy_price, lot.currency)] : []),
+                      ...(costs != null && costs > 0.004 ? [op('+'), `<span class="perf-lot-result">${formatCompactEur(costs)} <span class="perf-lot-unit">fee</span></span>`] : []),
+                      `<wbr><span class="perf-lot-result">${op('=')}<span class="perf-lot-total">${formatEur(lot.cost_eur || 0)}</span></span>`,
+                    ].join('');
                     const dateLabel = lot.sell_date
                       ? `${formatDay(lot.date)} → ${formatDay(lot.sell_date)}`
                       : formatDay(lot.date);
@@ -2740,7 +2825,7 @@
                     <button class="perf-lot${state.selectedLotId === lot.id ? ' selected' : ''}" type="button" data-lot-id="${escapeHtml(lot.id)}">
                       <div class="perf-lot-main">
                         <div class="perf-lot-date">${dateLabel}</div>
-                        <div class="perf-lot-meta">${formatShares(lot.remaining_qty)}${lot.buy_price != null ? ` × ${formatPrice(lot.buy_price, lot.currency)}` : ''}${costsMeta}${totalMeta}</div>
+                        <div class="perf-lot-meta">${formula}</div>
                       </div>
                       <div class="perf-lot-right">
                         <div class="perf-lot-pct ${numberClass(lot.gain_pct)}">${lot.gain_pct != null ? formatPct(lot.gain_pct) : '—'}</div>
@@ -3142,7 +3227,10 @@
     $('sidebar-backdrop').addEventListener('click', () => setSidebarOpen(false));
     $('mobile-more-btn').addEventListener('click', () => setMobileMoreOpen($('mobile-more').hidden));
     $('mobile-more-backdrop').addEventListener('click', () => setMobileMoreOpen(false));
-    $('theme-toggle').addEventListener('click', toggleTheme);
+    $('theme-mode').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-theme-mode]');
+      if (btn) setThemeMode(btn.dataset.themeMode);
+    });
     $('settings-btn').addEventListener('click', openSettings);
     $('mobile-settings-btn').addEventListener('click', () => {
       setMobileMoreOpen(false);
@@ -3234,16 +3322,7 @@
       const holding = e.target.closest('[data-perf-key]');
       if (holding) {
         openHoldingPerformance(holding.dataset.perfKey, holding);
-        return;
       }
-      const header = e.target.closest('.tt-section-header');
-      if (!header) return;
-      const id = header.dataset.section;
-      const content = document.getElementById(`${id}-content`);
-      const toggle = document.getElementById(`${id}-toggle`);
-      content.classList.toggle('collapsed');
-      toggle.classList.toggle('collapsed');
-      state.ttSectionStates[id] = content.classList.contains('collapsed');
     });
     $('file-input').addEventListener('change', () => uploadFile($('file-input'), '/api/upload-transactions', 'Uploading transactions…'));
     const clickUploadTx = () => { closeOverlay('settings-overlay'); $('file-input').click(); };
@@ -3273,10 +3352,10 @@
       if (!btn) return;
       openConfirm('Delete holding', 'Remove this other-broker holding?', 'Delete', () => deleteManualHolding(btn.dataset.deleteHolding));
     });
-    $('holding-change-mode').addEventListener('click', (e) => {
+    document.querySelectorAll('.change-mode').forEach((seg) => seg.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-mode]');
       if (btn) setChangeMode(btn.dataset.mode);
-    });
+    }));
     document.addEventListener('click', (e) => {
       if (e.target.closest('[data-toggle-change-mode]')) setChangeMode(state.holdingChangeMode === 'eur' ? 'pct' : 'eur');
     });
@@ -3300,9 +3379,7 @@
       }
       const toggle = e.target.closest('[data-perf-toggle]');
       if (toggle) {
-        const key = toggle.dataset.perfToggle;
-        state.perfCollapsed[key] = state.perfCollapsed[key] !== false ? false : true;
-        renderPerformance();
+        togglePerfLots(toggle.dataset.perfToggle);
         return;
       }
       const select = e.target.closest('[data-perf-select]');

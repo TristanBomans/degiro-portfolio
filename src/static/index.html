@@ -72,16 +72,9 @@
           <div class="topbar-compact" id="topbar-compact" aria-hidden="true"></div>
         </div>
         <div class="topbar-actions">
-          <label class="broker-toggle" title="Include other-broker holdings">
-            <input type="checkbox" id="include-other-brokers">
-            <span>Other brokers</span>
-          </label>
           <button class="btn btn-ghost btn-icon connection-status" id="live-refresh-btn" type="button" title="Refresh live prices" aria-label="Refresh live prices">
             <svg class="connection-icon connection-icon-online" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 6v3l4-4-4-4v3c-4.42 0-8 3.58-8 8 0 1.57.46 3.03 1.24 4.26L6.7 14.8c-.45-.83-.7-1.79-.7-2.8 0-3.31 2.69-6 6-6zm6.76 1.74L17.3 9.2c.44.84.7 1.79.7 2.8 0 3.31-2.69 6-6 6v-3l-4 4 4 4v-3c4.42 0 8-3.58 8-8 0-1.57-.46-3.03-1.24-4.26z"/></svg>
             <svg class="connection-icon connection-icon-offline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 18h10.7a3.8 3.8 0 0 0 .8-7.5A6.2 6.2 0 0 0 7 7.8a4.7 4.7 0 0 0-2.1 8.9"/><path d="m4 4 16 16"/></svg>
-          </button>
-          <button class="btn btn-ghost btn-icon" id="theme-toggle" type="button" title="Toggle theme" aria-label="Toggle theme">
-            <svg id="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>
           </button>
         </div>
       </header>
@@ -133,7 +126,7 @@
                   <div class="panel-kicker">Positions</div>
                   <h2>Current holdings</h2>
                 </div>
-                <div class="seg seg-compact" id="holding-change-mode" role="group" aria-label="Day change as">
+                <div class="seg seg-compact change-mode" id="holding-change-mode" role="group" aria-label="Day change as">
                   <button type="button" data-mode="pct" title="Day change in percent">%</button>
                   <button type="button" data-mode="eur" title="Day change in euro">€</button>
                 </div>
@@ -180,8 +173,20 @@
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
                 </button>
               </div>
-              <div id="tt-content"></div>
             </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-kicker" id="tt-kicker">Positions</div>
+                <h2>Holdings</h2>
+              </div>
+              <div class="seg seg-compact change-mode" id="graph-change-mode" role="group" aria-label="Change as">
+                <button type="button" data-mode="pct" title="Change in percent">%</button>
+                <button type="button" data-mode="eur" title="Change in euro">€</button>
+              </div>
+            </div>
+            <div class="panel-body" id="tt-content"></div>
           </div>
         </section>
 
@@ -321,6 +326,26 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
         </button>
       </div>
+
+      <section class="settings-section" aria-labelledby="settings-display-title">
+        <div class="settings-kicker" id="settings-display-title">Display</div>
+        <div class="settings-group">
+          <div class="settings-row settings-row-static">
+            <svg class="settings-row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17a8.5 8.5 0 0 0 0-17z" fill="currentColor"/></svg>
+            <span><strong>Appearance</strong><small>Auto follows your device</small></span>
+            <div class="seg seg-compact" id="theme-mode" role="group" aria-label="Appearance">
+              <button type="button" data-theme-mode="system">Auto</button>
+              <button type="button" data-theme-mode="light">Light</button>
+              <button type="button" data-theme-mode="dark">Dark</button>
+            </div>
+          </div>
+          <label class="settings-row">
+            <svg class="settings-row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            <span><strong>Other brokers</strong><small>Include holdings outside DEGIRO</small></span>
+            <input class="settings-switch" type="checkbox" id="include-other-brokers" role="switch">
+          </label>
+        </div>
+      </section>
 
       <section class="settings-section" id="gmail-block" aria-labelledby="settings-mailbox-title">
         <div class="settings-kicker" id="settings-mailbox-title">Mailbox</div>

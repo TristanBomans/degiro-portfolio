@@ -302,6 +302,62 @@ function sortTransactions(transactions) {
   });
 }
 
+// Walks a position FIFO through a period that starts after the close of
+// `from`. Shares held at that close start at their value then (`fromShareEur`
+// each), later buys at their cost; sales inside the period realise their
+// proceeds against that basis. Returns null when shares were held at `from`
+// without a price to value them.
+function periodLotSplit(transactions, from, fromShareEur) {
+  const lots = [];
+  let started = false;
+  let soldQty = 0;
+  let soldBasis = 0;
+  let proceeds = 0;
+  const start = () => {
+    started = true;
+    if (!lots.length) return true;
+    if (fromShareEur == null) return false;
+    for (const lot of lots) lot.basis = lot.qty * fromShareEur;
+    return true;
+  };
+
+  for (const t of sortTransactions(transactions || [])) {
+    const day = (t.date || '').split('T')[0];
+    if (!started && day > from && !start()) return null;
+    const qty = Number(t.quantity) || 0;
+    const eur = Math.abs(Number(t.total_eur) || 0);
+    if (qty > 0) {
+      lots.push({ qty, basis: eur });
+    } else if (qty < 0) {
+      let left = -qty;
+      for (const lot of lots) {
+        if (left <= 1e-8) break;
+        if (lot.qty <= 1e-8) continue;
+        const take = Math.min(lot.qty, left);
+        const takeBasis = lot.basis * (take / lot.qty);
+        if (started) {
+          soldQty += take;
+          soldBasis += takeBasis;
+          proceeds += eur * (take / -qty);
+        }
+        lot.qty -= take;
+        lot.basis -= takeBasis;
+        left -= take;
+      }
+    }
+  }
+  if (!started && !start()) return null;
+
+  const openLots = lots.filter((lot) => lot.qty > 1e-8);
+  return {
+    openQty: openLots.reduce((s, lot) => s + lot.qty, 0),
+    openBasis: openLots.reduce((s, lot) => s + lot.basis, 0),
+    soldQty,
+    soldBasis,
+    proceeds,
+  };
+}
+
 function splitLotsFromTransactions(transactions) {
   const lots = [];
 
@@ -2325,22 +2381,18 @@ app.get('/api/time-travel', (req, res) => {
   const transactions = allTransactions.filter((t) => (t.date || '').split('T')[0] <= date);
 
   const holdingsMap = {};
-  const fromQtyMap = {};
-  const periodFlowMap = {};
+  const transByStock = {};
+  const soldInPeriod = new Set();
   for (const t of transactions) {
-    const tDate = (t.date || '').split('T')[0];
     holdingsMap[t.stock_id] = (holdingsMap[t.stock_id] || 0) + t.quantity;
-    if (!from) continue;
-    if (tDate <= from) {
-      fromQtyMap[t.stock_id] = (fromQtyMap[t.stock_id] || 0) + t.quantity;
-    } else {
-      const flow = t.quantity > 0 ? Math.abs(t.total_eur) : -Math.abs(t.total_eur);
-      periodFlowMap[t.stock_id] = (periodFlowMap[t.stock_id] || 0) + flow;
-    }
+    (transByStock[t.stock_id] = transByStock[t.stock_id] || []).push(t);
+    if (from && t.quantity < 0 && (t.date || '').split('T')[0] > from) soldInPeriod.add(t.stock_id);
   }
 
+  // Positions closed inside the period still carry a result for it, so they
+  // stay in the list (as sold) until the window moves past their last sale.
   const activeStockIds = Object.entries(holdingsMap)
-    .filter(([, qty]) => qty > 0)
+    .filter(([id, qty]) => qty > 1e-8 || soldInPeriod.has(Number(id)))
     .map(([id]) => Number(id));
 
   const manualHoldings = includeManual
@@ -2368,6 +2420,13 @@ app.get('/api/time-travel', (req, res) => {
     const base = fromValueEur + Math.max(0, flowEur);
     return { eur: round2(gain), pct: base > 0 ? round2((gain / base) * 100) : null };
   };
+  const pctOf = (gain, base) => (base > 0 ? round2((gain / base) * 100) : null);
+  const priceRowOn = db.prepare(
+    `SELECT * FROM stock_prices
+     WHERE stock_id = ? AND substr(date, 1, 10) <= ?
+     ORDER BY substr(date, 1, 10) DESC, date DESC
+     LIMIT 1`
+  );
 
   const holdingsList = [];
   let totalValueEur = 0;
@@ -2378,14 +2437,8 @@ app.get('/api/time-travel', (req, res) => {
     const stock = db.prepare('SELECT * FROM stocks WHERE id = ?').get(stockId);
     if (!stock) continue;
 
-    const qty = holdingsMap[stockId];
-
-    const priceRow = db.prepare(
-      `SELECT * FROM stock_prices
-       WHERE stock_id = ? AND substr(date, 1, 10) <= ?
-       ORDER BY substr(date, 1, 10) DESC, date DESC
-       LIMIT 1`
-    ).get(stockId, date);
+    const qty = Math.max(0, holdingsMap[stockId]);
+    const priceRow = priceRowOn.get(stockId, date);
 
     let prevPriceRow = null;
     if (priceRow) {
@@ -2408,23 +2461,37 @@ app.get('/api/time-travel', (req, res) => {
       dailyChangePct = ((price - prevPrice) / prevPrice) * 100;
     }
 
-    let fromValueEur = null;
+    // The shares still held are measured against their value at `from` (or
+    // their cost when bought later); shares sold inside the period count as
+    // realised against that same basis, FIFO, like the Performance tab.
+    let open = { eur: null, pct: null };
+    let sold = null;
+    let priceChangePct = null;
     if (from) {
-      const fromQty = fromQtyMap[stockId] || 0;
-      fromValueEur = 0;
-      if (fromQty > 0) {
-        const fromRow = db.prepare(
-          `SELECT * FROM stock_prices
-           WHERE stock_id = ? AND substr(date, 1, 10) <= ?
-           ORDER BY substr(date, 1, 10) DESC, date DESC
-           LIMIT 1`
-        ).get(stockId, from);
-        fromValueEur = fromRow?.close != null
-          ? fromQty * fromRow.close * stockRate(stockId, fromRow.currency || currency, from)
-          : null;
+      const fromRow = priceRowOn.get(stockId, from);
+      const fromShareEur = fromRow?.close != null
+        ? fromRow.close * stockRate(stockId, fromRow.currency || currency, from)
+        : null;
+      const split = periodLotSplit(transByStock[stockId], from, fromShareEur);
+      if (split) {
+        if (totalValueInEur != null && qty > 0) {
+          open = { eur: round2(totalValueInEur - split.openBasis), pct: pctOf(totalValueInEur - split.openBasis, split.openBasis) };
+        }
+        if (split.soldQty > 0) {
+          sold = {
+            qty: roundQty(split.soldQty),
+            proceeds_eur: round2(split.proceeds),
+            eur: round2(split.proceeds - split.soldBasis),
+            pct: pctOf(split.proceeds - split.soldBasis, split.soldBasis),
+          };
+        }
+      }
+      // What the instrument itself did, in its own currency.
+      if (fromRow?.close > 0 && price != null && (fromRow.currency || currency) === currency) {
+        priceChangePct = round2(((price - fromRow.close) / fromRow.close) * 100);
       }
     }
-    const period = periodChange(totalValueInEur, fromValueEur, periodFlowMap[stockId] || 0);
+    if (qty <= 0 && !sold) continue;
 
     if (totalValueInEur != null) totalValueEur += totalValueInEur;
     if (dailyChange != null) {
@@ -2449,8 +2516,12 @@ app.get('/api/time-travel', (req, res) => {
       total_value_eur: totalValueInEur != null ? round2(totalValueInEur) : null,
       daily_change_eur: dailyChange != null ? round2(dailyChange) : null,
       daily_change_pct: dailyChangePct != null ? round2(dailyChangePct) : null,
-      period_change_eur: period.eur,
-      period_change_pct: period.pct,
+      closed: qty <= 0,
+      period_change_eur: open.eur,
+      period_change_pct: open.pct,
+      period_sold: sold,
+      price_change_pct: priceChangePct,
+      kind: isTrackerName(stock.name) ? 'tracker' : 'stock',
     });
   }
 
@@ -2480,16 +2551,20 @@ app.get('/api/time-travel', (req, res) => {
 
     let fromValueEur = null;
     let flow = 0;
+    let priceChangePct = null;
     if (from) {
       const purchaseDay = (m.purchase_date || '').split('T')[0];
+      const fromRow = getManualHoldingPriceOnDate(db, m.id, from);
       if (purchaseDay > from) {
         fromValueEur = 0;
         flow = m.cost_basis_eur || 0;
       } else {
-        const fromRow = getManualHoldingPriceOnDate(db, m.id, from);
         fromValueEur = fromRow?.close != null
           ? m.quantity * fromRow.close * getRate(fromRow.currency || currency, from)
           : null;
+      }
+      if (fromRow?.close > 0 && price != null && (fromRow.currency || currency) === currency) {
+        priceChangePct = round2(((price - fromRow.close) / fromRow.close) * 100);
       }
     }
     const period = periodChange(totalValueInEur, fromValueEur, flow);
@@ -2517,8 +2592,12 @@ app.get('/api/time-travel', (req, res) => {
       total_value_eur: totalValueInEur != null ? round2(totalValueInEur) : null,
       daily_change_eur: dailyChange != null ? round2(dailyChange) : null,
       daily_change_pct: dailyChangePct != null ? round2(dailyChangePct) : null,
+      closed: false,
       period_change_eur: period.eur,
       period_change_pct: period.pct,
+      period_sold: null,
+      price_change_pct: priceChangePct,
+      kind: 'manual',
     });
   }
 

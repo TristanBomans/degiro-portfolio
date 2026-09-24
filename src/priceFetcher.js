@@ -168,13 +168,21 @@ async function fetchStockPrices(stock) {
     'SELECT date FROM stock_prices WHERE stock_id = ? AND date GLOB ? ORDER BY date DESC LIMIT 1'
   ).get(stock.id, '????-??-??');
 
+  // Year-to-date figures measure from last year's final close, so history
+  // always reaches a couple of weeks before January 1.
+  const now = new Date();
+  const yearStart = new Date(now.getFullYear(), 0, 1);
+  yearStart.setDate(yearStart.getDate() - 14);
+  const earliestDaily = db.prepare(
+    'SELECT MIN(date) as min_date FROM stock_prices WHERE stock_id = ? AND date GLOB ?'
+  ).get(stock.id, '????-??-??');
+  const missesYearBaseline = earliestDaily?.min_date >= `${now.getFullYear()}-01-01`;
+
   let startDate;
-  if (latestDaily?.date) {
+  if (latestDaily?.date && !missesYearBaseline) {
     startDate = new Date(`${latestDaily.date}T00:00:00Z`);
     startDate.setUTCDate(startDate.getUTCDate() - 7);
   } else {
-    const now = new Date();
-    const yearStart = new Date(now.getFullYear(), 0, 1);
     const earliest = db.prepare(
       'SELECT MIN(date) as min_date FROM transactions WHERE stock_id = ?'
     ).get(stock.id);
