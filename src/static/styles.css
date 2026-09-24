@@ -2211,6 +2211,7 @@ html.dark .dialog {
 }
 
 .form-group input[type="text"],
+.form-group input[type="email"],
 .form-group input[type="number"],
 .form-group input[type="date"],
 .form-group input[type="password"] {
@@ -2227,65 +2228,165 @@ html.dark .dialog {
   font-size: 0.8125rem;
 }
 
-.settings-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  margin-bottom: 1rem;
+.dialog-handle {
+  display: none;
 }
 
-.settings-block {
-  margin-bottom: 1rem;
-  padding: 0.85rem 0.9rem 0.95rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--card) 70%, transparent);
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: -0.25rem -0.25rem 0.75rem 0;
+}
+
+.settings-head h3 {
+  margin: 0;
+}
+
+.settings-section + .settings-section {
+  margin-top: 1rem;
 }
 
 .settings-kicker {
-  font-size: 0.68rem;
+  padding: 0 0.15rem 0.4rem;
+  font-size: 0.6875rem;
   font-weight: 650;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.035em;
   text-transform: uppercase;
   color: var(--muted-foreground);
-  margin-bottom: 0.35rem;
+}
+
+.settings-group {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--popover);
+}
+
+.settings-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1.25rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  min-height: 3.1rem;
+  padding: 0.5rem 0.8rem;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  text-align: left;
+  overflow: hidden;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms ease;
+}
+
+.settings-row[hidden],
+.settings-setup[hidden] {
+  display: none;
+}
+
+.settings-group > :not([hidden]) ~ :not([hidden]) {
+  border-top: 1px solid var(--border);
+}
+
+.settings-row:hover {
+  background: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.settings-row:active {
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+
+.settings-row:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.settings-row-static,
+.settings-row-static:hover,
+.settings-row-static:active {
+  cursor: default;
+  background: transparent;
+}
+
+.settings-row-icon {
+  width: 1.1rem;
+  height: 1.1rem;
+  justify-self: center;
+  color: var(--muted-foreground);
+}
+
+.settings-row > span:not(.settings-status) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.settings-row strong {
+  overflow: hidden;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-row small {
+  overflow: hidden;
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-row-chevron {
+  width: 0.85rem;
+  height: 0.85rem;
+  color: var(--muted-foreground);
+}
+
+.settings-row-danger strong,
+.settings-row-danger .settings-row-icon {
+  color: var(--destructive);
+}
+
+.settings-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--success-foreground);
+}
+
+.settings-status::before {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 999px;
+  background: var(--success);
+  content: "";
+}
+
+.settings-setup {
+  padding: 0.8rem;
+}
+
+.settings-setup-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
 .settings-hint {
-  margin: 0 0 0.75rem;
-  font-size: 0.78rem;
+  margin: 0.45rem 0.15rem 0;
+  font-size: 0.72rem;
   line-height: 1.45;
   color: var(--muted-foreground);
-}
-
-.settings-steps {
-  margin: 0 0 0.85rem;
-  padding-left: 1.15rem;
-  font-size: 0.75rem;
-  line-height: 1.5;
-  color: var(--muted-foreground);
-}
-
-.settings-steps li + li {
-  margin-top: 0.35rem;
-}
-
-.settings-steps code {
-  display: inline-block;
-  margin: 0.15rem 0.25rem 0 0;
-  padding: 0.1rem 0.35rem;
-  font-size: 0.68rem;
-  word-break: break-all;
-  border-radius: 0.3rem;
-  background: var(--muted);
-  color: var(--foreground);
-}
-
-.settings-gmail-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  margin-top: 0.75rem;
 }
 
 .form-row {
@@ -2305,31 +2406,7 @@ html.dark .dialog {
   display: flex;
   align-items: center;
   gap: 0.45rem;
-  margin: 0 0 0.75rem;
   font-size: 0.8125rem;
-}
-
-.mailbox-account {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin: 0 0 0.75rem;
-  padding: 0.7rem 0.8rem;
-  border: 1px solid var(--border);
-  border-radius: var(--control-radius);
-  background: var(--popover);
-}
-
-.mailbox-email {
-  font-size: 0.8125rem;
-  font-weight: 600;
-}
-
-.mailbox-meta {
-  margin-top: 0.15rem;
-  font-size: 0.72rem;
-  color: var(--muted-foreground);
 }
 
 .scan-summary {
@@ -2400,18 +2477,6 @@ html.dark .dialog {
   height: 1.5rem;
   padding: 0 0.45rem;
   font-size: 0.68rem;
-}
-
-#gmail-setup[hidden],
-#gmail-account[hidden] {
-  display: none;
-}
-
-.settings-list label {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.8125rem;
 }
 
 .workspace-loader {
@@ -2862,6 +2927,19 @@ html.dark .dialog {
     border-bottom: 0;
     border-left: 0;
     border-radius: 1.15rem 1.15rem 0 0;
+  }
+
+  .dialog-handle {
+    display: block;
+    width: 2.25rem;
+    height: 0.25rem;
+    margin: -0.4rem auto 0.75rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--foreground) 22%, transparent);
+  }
+
+  .settings-row {
+    min-height: 3.35rem;
   }
 
   .overlay.show .dialog {
