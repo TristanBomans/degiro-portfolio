@@ -2215,12 +2215,12 @@
       $('gmail-account-email').textContent = status.email || 'Connected mailbox';
       const proto = status.secure ? 'SSL/TLS' : 'STARTTLS';
       $('gmail-account-meta').textContent = `${status.host}:${status.port} · ${proto}`;
-      const last = status.lastScan
-        ? ` Last scan ${new Date(status.lastScan).toLocaleString()}.`
-        : '';
-      copy.textContent = `Inbox connected.${last} Scan adds DEGIRO confirmation fills without replacing history.`;
+      $('gmail-scan-meta').textContent = status.lastScan
+        ? `Last scan ${new Date(status.lastScan).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`
+        : 'Not scanned yet';
+      copy.textContent = 'Scans add new DEGIRO confirmation fills without replacing history.';
     } else {
-      copy.textContent = 'Same credentials as Easereader: Gmail address plus an app password. The inbox is read over IMAP (SMTP can only send).';
+      copy.textContent = 'Gmail address plus an app password. The inbox is read over IMAP.';
     }
   }
 

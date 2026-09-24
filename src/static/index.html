@@ -313,59 +313,86 @@
   </div>
 
   <div class="overlay" id="settings-overlay">
-    <div class="dialog dialog-settings" role="dialog" aria-labelledby="settings-title">
-      <h3 id="settings-title">Settings</h3>
-      <div class="settings-block" id="gmail-block">
-        <div class="settings-kicker">Mailbox</div>
-        <p class="settings-hint" id="gmail-status-copy">Same credentials as Easereader: Gmail address plus an app password. The inbox is read over IMAP (SMTP can only send).</p>
-        <div id="gmail-account" class="mailbox-account" hidden>
-          <div>
-            <div class="mailbox-email" id="gmail-account-email"></div>
-            <div class="mailbox-meta" id="gmail-account-meta"></div>
+    <div class="dialog dialog-settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="dialog-handle" aria-hidden="true"></div>
+      <div class="settings-head">
+        <h3 id="settings-title">Settings</h3>
+        <button class="btn btn-ghost btn-icon" id="settings-close" type="button" aria-label="Close settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+
+      <section class="settings-section" id="gmail-block" aria-labelledby="settings-mailbox-title">
+        <div class="settings-kicker" id="settings-mailbox-title">Mailbox</div>
+        <div class="settings-group">
+          <div class="settings-row settings-row-static" id="gmail-account" hidden>
+            <svg class="settings-row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5.5" width="18" height="13" rx="2"/><path d="M4 8l8 6 8-6"/></svg>
+            <span><strong id="gmail-account-email"></strong><small id="gmail-account-meta"></small></span>
+            <span class="settings-status">Connected</span>
           </div>
-        </div>
-        <div id="gmail-setup">
-          <div class="preset-row">
-            <button class="btn btn-ghost btn-tiny" type="button" data-mail-preset="gmail">Gmail</button>
-            <button class="btn btn-ghost btn-tiny" type="button" data-mail-preset="outlook">Outlook</button>
-          </div>
-          <div class="form-group">
-            <label for="mailbox-user">Email address</label>
-            <input id="mailbox-user" type="email" autocomplete="username" placeholder="bomanstristan@gmail.com">
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label for="mailbox-host">Host</label>
-              <input id="mailbox-host" type="text" value="imap.gmail.com" spellcheck="false">
+          <button class="settings-row" id="gmail-scan-btn" type="button" hidden>
+            <svg class="settings-row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 4v5h-5"/></svg>
+            <span><strong>Scan confirmations</strong><small id="gmail-scan-meta">Import new DEGIRO fills</small></span>
+            <svg class="settings-row-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+          </button>
+          <button class="settings-row" id="gmail-disconnect-btn" type="button" hidden>
+            <svg class="settings-row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+            <span><strong>Disconnect</strong><small>Forget the stored app password</small></span>
+          </button>
+          <div class="settings-setup" id="gmail-setup">
+            <div class="preset-row">
+              <button class="btn btn-outline btn-tiny" type="button" data-mail-preset="gmail">Gmail</button>
+              <button class="btn btn-outline btn-tiny" type="button" data-mail-preset="outlook">Outlook</button>
             </div>
             <div class="form-group">
-              <label for="mailbox-port">Port</label>
-              <input id="mailbox-port" type="number" value="993">
+              <label for="mailbox-user">Email address</label>
+              <input id="mailbox-user" type="email" autocomplete="username" placeholder="you@gmail.com">
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="mailbox-host">Host</label>
+                <input id="mailbox-host" type="text" value="imap.gmail.com" spellcheck="false">
+              </div>
+              <div class="form-group">
+                <label for="mailbox-port">Port</label>
+                <input id="mailbox-port" type="number" value="993">
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="mailbox-password">App password</label>
+              <input id="mailbox-password" type="password" autocomplete="current-password" placeholder="Same Gmail app password as Easereader">
+            </div>
+            <div class="settings-setup-actions">
+              <label class="settings-check">
+                <input id="mailbox-secure" type="checkbox" checked>
+                <span>SSL/TLS</span>
+              </label>
+              <button class="btn btn-primary" id="gmail-save-credentials" type="button">Connect mailbox</button>
             </div>
           </div>
-          <label class="settings-check">
-            <input id="mailbox-secure" type="checkbox" checked>
-            <span>SSL/TLS</span>
-          </label>
-          <div class="form-group">
-            <label for="mailbox-password">App password</label>
-            <input id="mailbox-password" type="password" autocomplete="current-password" placeholder="Same Gmail app password as Easereader">
-          </div>
-          <button class="btn btn-primary" id="gmail-save-credentials" type="button">Connect mailbox</button>
         </div>
-        <div class="settings-gmail-actions">
-          <button class="btn btn-primary" id="gmail-scan-btn" type="button" hidden>Scan confirmations</button>
-          <button class="btn btn-ghost" id="gmail-disconnect-btn" type="button" hidden>Disconnect</button>
+        <p class="settings-hint" id="gmail-status-copy">Gmail address plus an app password. The inbox is read over IMAP.</p>
+      </section>
+
+      <section class="settings-section" aria-labelledby="settings-data-title">
+        <div class="settings-kicker" id="settings-data-title">Data</div>
+        <div class="settings-group">
+          <button class="settings-row" id="update-market-btn" type="button">
+            <svg class="settings-row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>
+            <span><strong>Update market data</strong><small>Refresh prices, FX rates and history</small></span>
+            <svg class="settings-row-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+          </button>
+          <button class="settings-row" id="upload-tx-btn" type="button">
+            <svg class="settings-row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 18v-6M9 15l3-3 3 3"/></svg>
+            <span><strong>Import Excel export</strong><small>Replaces all transactions with a DEGIRO export</small></span>
+            <svg class="settings-row-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+          </button>
+          <button class="settings-row settings-row-danger" id="purge-btn" type="button">
+            <svg class="settings-row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/></svg>
+            <span><strong>Purge all data</strong><small>Delete positions, transactions and prices</small></span>
+          </button>
         </div>
-      </div>
-      <div class="settings-list">
-        <button class="btn btn-primary" id="upload-tx-btn" type="button">Replace with Excel export</button>
-        <button class="btn btn-outline" id="update-market-btn" type="button">Update market data</button>
-        <button class="btn btn-destructive" id="purge-btn" type="button">Purge all data</button>
-      </div>
-      <div class="dialog-actions">
-        <button class="btn btn-outline" id="settings-close" type="button">Close</button>
-      </div>
+      </section>
     </div>
   </div>
 
