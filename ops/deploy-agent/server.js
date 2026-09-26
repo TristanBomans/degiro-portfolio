@@ -1,6 +1,6 @@
 const fs = require('fs');
 const http = require('http');
-const { replaceStackImage, validateDeployment, verifySignature } = require('./lib');
+const { replaceStackImage, secretForProject, validateDeployment, verifySignature } = require('./lib');
 
 const port = Number(process.env.PORT || 8080);
 const portainerUrl = process.env.PORTAINER_URL || 'http://portainer:9000';
@@ -138,7 +138,8 @@ const server = http.createServer(async (req, res) => {
     const timestamp = req.headers['x-deploy-timestamp'];
     const signature = req.headers['x-deploy-signature'];
     const delivery = req.headers['x-deploy-delivery'];
-    if (!verifySignature(sharedSecret, timestamp, rawBody, signature)) return json(res, 401, { error: 'Invalid signature' });
+    const secret = secretForProject(targets, rawBody, process.env, sharedSecret);
+    if (!verifySignature(secret, timestamp, rawBody, signature)) return json(res, 401, { error: 'Invalid signature' });
     if (!/^[0-9a-f-]{16,64}$/i.test(delivery || '') || recentDeliveries.has(delivery)) return json(res, 409, { error: 'Invalid or replayed delivery' });
     recentDeliveries.set(delivery, Date.now());
     for (const [id, seenAt] of recentDeliveries) if (Date.now() - seenAt > 600000) recentDeliveries.delete(id);
