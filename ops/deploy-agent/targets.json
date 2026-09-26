@@ -11,5 +11,18 @@
       { "id": 115, "name": "degiro-portfolio" },
       { "id": 116, "name": "senne-portfolio" }
     ]
+  },
+  "shotten-backend-node": {
+    "repository": "TristanBomans/shotten-backend-node",
+    "registryUsername": "TristanBomans",
+    "image": "ghcr.io/tristanbomans/shotten-backend-node",
+    "imageAliases": [
+      "ghcr.io/tristanbomans/shotten-backend-node",
+      "localhost:5011/shotten-backend"
+    ],
+    "secretEnv": "DEPLOY_SECRET_SHOTTEN_BACKEND_NODE",
+    "stacks": [
+      { "id": 117, "name": "shotten" }
+    ]
   }
 }

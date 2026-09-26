@@ -33,3 +33,8 @@ Add another top-level key to `targets.json`, deploy the updated worker, and add
 a workflow that signs the same request contract. Keep the HMAC secret in the
 repository's Actions secrets and in the worker's `DEPLOY_SHARED_SECRET`
 environment variable.
+
+A target can set `secretEnv` to the name of its own environment variable
+(e.g. `DEPLOY_SECRET_SHOTTEN_BACKEND_NODE`). Requests for that project are then
+verified against that secret only, so a leaked secret from one repository
+cannot sign deploys for another.

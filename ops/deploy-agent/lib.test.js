@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
 const test = require('node:test');
-const { replaceStackImage, validateDeployment, verifySignature } = require('./lib');
+const { replaceStackImage, secretForProject, validateDeployment, verifySignature } = require('./lib');
 
 const target = {
   repository: 'TristanBomans/degiro-portfolio',
@@ -31,4 +31,14 @@ test('replaces only the allowlisted application image', () => {
   assert.match(updated, new RegExp(image));
   assert.match(updated, /oauth2-proxy:latest/);
   assert.throws(() => replaceStackImage('image: unrelated/app:latest', target, image), /found 0/);
+});
+
+test('picks the per-project secret when a target names one', () => {
+  const targets = { shared: {}, own: { secretEnv: 'OWN_SECRET' } };
+  const env = { OWN_SECRET: 'own' };
+  assert.equal(secretForProject(targets, '{"project":"shared"}', env, 'shared'), 'shared');
+  assert.equal(secretForProject(targets, '{"project":"own"}', env, 'shared'), 'own');
+  assert.equal(secretForProject(targets, '{"project":"own"}', {}, 'shared'), '');
+  assert.equal(secretForProject(targets, '{"project":"toString"}', env, 'shared'), '');
+  assert.equal(secretForProject(targets, 'not json', env, 'shared'), '');
 });

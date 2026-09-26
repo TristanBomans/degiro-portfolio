@@ -12,6 +12,20 @@ function verifySignature(secret, timestamp, rawBody, suppliedSignature, nowSecon
   return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(suppliedSignature));
 }
 
+// A target may name its own secret (secretEnv) so one leaked repository secret
+// cannot sign deploys for another project. Targets without it use the shared one.
+function secretForProject(targets, rawBody, env, sharedSecret) {
+  let project;
+  try {
+    project = JSON.parse(rawBody).project;
+  } catch (_error) {
+    return '';
+  }
+  const target = typeof project === 'string' && Object.hasOwn(targets, project) ? targets[project] : null;
+  if (!target) return '';
+  return target.secretEnv ? env[target.secretEnv] || '' : sharedSecret;
+}
+
 function validateDeployment(target, payload) {
   if (!target) throw new Error('Unknown deployment project');
   if (payload.repository !== target.repository) throw new Error('Repository does not match deployment target');
@@ -31,4 +45,4 @@ function replaceStackImage(stackFile, target, newImage) {
   return updated;
 }
 
-module.exports = { replaceStackImage, validateDeployment, verifySignature };
+module.exports = { replaceStackImage, secretForProject, validateDeployment, verifySignature };
