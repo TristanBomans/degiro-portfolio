@@ -38,6 +38,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19h16"/><path d="M5 15l4-6 3 3 5-8"/><circle cx="17" cy="4" r="1.4" fill="currentColor" stroke="none"/></svg>
           Performance
         </button>
+        <button class="nav-item" data-view="tax" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="m9.5 14.5 5-5"/><circle cx="9.75" cy="9.75" r=".9" fill="currentColor" stroke="none"/><circle cx="14.25" cy="14.25" r=".9" fill="currentColor" stroke="none"/></svg>
+          Tax
+        </button>
         <button class="nav-item" data-view="history" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg>
           History
@@ -231,6 +235,83 @@
           </div>
         </section>
 
+        <section class="view" id="view-tax">
+          <div class="tax-layout">
+            <div class="tax-col">
+              <div class="panel">
+                <div class="panel-header">
+                  <div>
+                    <div class="panel-kicker">Meerwaardebelasting</div>
+                    <h2 id="tax-summary-title">Capital gains</h2>
+                  </div>
+                  <div class="seg seg-compact" id="tax-year" role="group" aria-label="Tax year"></div>
+                </div>
+                <div class="panel-body" id="tax-summary"></div>
+              </div>
+              <div class="panel" id="tax-sim-panel">
+                <div class="panel-header">
+                  <div>
+                    <div class="panel-kicker">What if</div>
+                    <h2>Simulate a sale</h2>
+                  </div>
+                  <button class="btn btn-ghost" id="tax-sim-clear" type="button" hidden>Clear</button>
+                </div>
+                <div class="panel-body">
+                  <div class="tax-sim-form">
+                    <label class="tax-field tax-field-position">
+                      <span>Position</span>
+                      <select id="tax-sim-position"></select>
+                    </label>
+                    <div class="tax-field tax-field-amount">
+                      <span class="tax-field-label">
+                        <span>Sell</span>
+                        <span class="seg seg-compact" id="tax-sim-mode" role="group" aria-label="Amount in">
+                          <button type="button" data-sim-mode="shares">Shares</button>
+                          <button type="button" data-sim-mode="eur">€</button>
+                        </span>
+                      </span>
+                      <input id="tax-sim-amount" type="number" inputmode="decimal" min="0" step="any" aria-label="Amount to sell">
+                    </div>
+                    <button class="btn btn-primary tax-sim-add" id="tax-sim-add" type="button">Add sale</button>
+                  </div>
+                  <div id="tax-sim-preview"></div>
+                  <div id="tax-sim-list"></div>
+                </div>
+              </div>
+            </div>
+            <div class="tax-col">
+              <div class="panel">
+                <div class="panel-header">
+                  <div>
+                    <div class="panel-kicker">Calculation</div>
+                    <h2>How it adds up</h2>
+                  </div>
+                </div>
+                <div class="panel-body">
+                  <div id="tax-breakdown"></div>
+                  <label class="tax-adjust">
+                    <span><strong>Other brokers</strong><small>Net realised result outside DEGIRO this year (loss as negative)</small></span>
+                    <input id="tax-adjust" type="number" inputmode="decimal" step="any" placeholder="€0">
+                  </label>
+                  <details class="tax-rules">
+                    <summary>Rules used</summary>
+                    <ul id="tax-rules-list"></ul>
+                  </details>
+                </div>
+              </div>
+              <div class="panel">
+                <div class="panel-header">
+                  <div>
+                    <div class="panel-kicker">Realised</div>
+                    <h2 id="tax-sales-title">Sales</h2>
+                  </div>
+                </div>
+                <div class="panel-body" id="tax-sales"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section class="view" id="view-history">
           <div class="panel panel-fill">
             <div class="panel-header">
@@ -271,6 +352,10 @@
     <button class="mobile-tab" data-view="performance" type="button">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 19h16"/><path d="M5 15l4-6 3 3 5-8"/><circle cx="17" cy="4" r="1.4" fill="currentColor" stroke="none"/></svg>
       <span>Performance</span>
+    </button>
+    <button class="mobile-tab" data-view="tax" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="m9.5 14.5 5-5"/><circle cx="9.75" cy="9.75" r=".9" fill="currentColor" stroke="none"/><circle cx="14.25" cy="14.25" r=".9" fill="currentColor" stroke="none"/></svg>
+      <span>Tax</span>
     </button>
     <button class="mobile-tab" data-view="history" type="button">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg>

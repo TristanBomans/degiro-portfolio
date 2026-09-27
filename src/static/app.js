@@ -3,12 +3,13 @@
     overview: { title: 'Overview', subtitle: 'Live value, invested capital, and P/L' },
     graph: { title: 'Graph', subtitle: 'Portfolio value and holdings on a selected date' },
     performance: { title: 'Performance', subtitle: 'Return per tracker and per purchase' },
+    tax: { title: 'Capital gains tax', subtitle: 'Realised result, exemption and what-if sales' },
     history: { title: 'History', subtitle: 'Month-end value and gain / loss' },
     brokers: { title: 'Other brokers', subtitle: 'Manual holdings outside DEGIRO' },
   };
 
   const TRACKER_KEYWORDS = ['ETF', 'UCITS', 'Tracker', 'iShares', 'Vanguard', 'SPDR', 'Amundi', 'Xtrackers', 'Lyxor'];
-  const VIEW_ORDER = ['overview', 'graph', 'performance', 'history', 'brokers'];
+  const VIEW_ORDER = ['overview', 'graph', 'performance', 'tax', 'history', 'brokers'];
 
   const state = {
     holdings: [],
@@ -45,6 +46,10 @@
     hasData: false,
     serverWasOffline: false,
     holdingChangeMode: localStorage.getItem('holdingChangeMode') === 'eur' ? 'eur' : 'pct',
+    capitalGains: null,
+    taxYear: new Date().getFullYear(),
+    taxSims: [],
+    taxSimMode: 'shares',
   };
 
   const $ = (id) => document.getElementById(id);
@@ -2094,7 +2099,7 @@
   }
 
   async function refreshOtherBrokersData() {
-    await loadOtherBrokersPanel();
+    await Promise.all([loadOtherBrokersPanel(), loadCapitalGains()]);
     if (state.includeOtherBrokers) {
       await Promise.all([
         loadPortfolioSummary(),
@@ -2119,6 +2124,7 @@
           loadHoldings(),
           loadPerformance(),
           loadOtherBrokersPanel(),
+          loadCapitalGains(),
         ]);
         if (show) showToast(`Live prices updated (${result.count || 0} symbols)`, true);
       } else if (show) {
@@ -3169,6 +3175,498 @@
     }
   }
 
+  // ─── Capital gains tax ─────────────────────────────────────────────
+  // The server walks every sale FIFO against its tax basis; the saldo, the
+  // exemption and what-if sales are worked out here so they react instantly.
+  const TAX_ADJUST_KEY = 'taxAdjustments';
+  const TAX_SIMS_KEY = 'taxSimulations';
+
+  function readStored(key, fallback) {
+    try {
+      return JSON.parse(localStorage.getItem(key)) ?? fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function writeStored(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch { /* storage full or unavailable */ }
+  }
+
+  const TAX_BASIS_LABELS = {
+    purchase: 'purchase price',
+    photo: 'value on 31 Dec 2025',
+    historical: 'higher purchase price',
+    'no-photo': 'purchase price (no 31 Dec 2025 price)',
+  };
+
+  function currentTaxYear() {
+    return new Date().getFullYear();
+  }
+
+  function taxYears() {
+    const data = state.capitalGains;
+    if (!data) return [];
+    const first = Number(data.rules.start.slice(0, 4));
+    const last = Math.max(currentTaxYear(), ...data.sales.map((s) => s.year));
+    const years = [];
+    for (let y = first; y <= last; y += 1) years.push(y);
+    return years;
+  }
+
+  // Mirrors capitalGainPiece on the server for a what-if sale at `priceEur`.
+  function taxPiece(lot, qty, priceEur, year) {
+    const { rules } = state.capitalGains;
+    const proceeds = qty * priceEur;
+    const historical = qty * lot.cost_per_share_eur;
+    const piece = { acquired: lot.acquired, qty, proceeds_eur: proceeds, historical_basis_eur: historical, photo_basis_eur: null };
+    if (lot.acquired >= rules.start) return { ...piece, basis_eur: historical, method: 'purchase', gain_eur: proceeds - historical };
+    if (lot.photo_per_share_eur == null) return { ...piece, basis_eur: historical, method: 'no-photo', gain_eur: proceeds - historical };
+    const photo = qty * lot.photo_per_share_eur;
+    piece.photo_basis_eur = photo;
+    if (proceeds <= photo) return { ...piece, basis_eur: photo, method: 'photo', gain_eur: proceeds - photo };
+    if (historical > photo && year <= rules.historicalUntilYear) {
+      return { ...piece, basis_eur: historical, method: 'historical', gain_eur: Math.max(0, proceeds - historical) };
+    }
+    return { ...piece, basis_eur: photo, method: 'photo', gain_eur: proceeds - photo };
+  }
+
+  function taxPosition(key) {
+    return state.capitalGains?.positions.find((p) => p.key === key) || null;
+  }
+
+  function wholeShares(position) {
+    return !position.is_manual || Number.isInteger(position.shares);
+  }
+
+  // What-if sales run one after another over the open lots, oldest first.
+  function simulateTaxSales(sims, year) {
+    const lotsByKey = new Map();
+    return sims.map((sim) => {
+      const position = taxPosition(sim.key);
+      if (!position || position.price_eur == null) return { ...sim, position, pieces: [], qty: 0, proceeds_eur: 0, basis_eur: 0, gain_eur: 0 };
+      if (!lotsByKey.has(sim.key)) lotsByKey.set(sim.key, position.lots.map((lot) => ({ ...lot })));
+      const lots = lotsByKey.get(sim.key);
+      const pieces = [];
+      let left = sim.qty;
+      for (const lot of lots) {
+        if (left <= 1e-8) break;
+        if (lot.qty <= 1e-8) continue;
+        const take = Math.min(lot.qty, left);
+        pieces.push(taxPiece(lot, take, position.price_eur, year));
+        lot.qty -= take;
+        left -= take;
+      }
+      const sum = (k) => pieces.reduce((s, p) => s + p[k], 0);
+      return { ...sim, position, pieces, qty: sim.qty - Math.max(0, left), proceeds_eur: sum('proceeds_eur'), basis_eur: sum('basis_eur'), gain_eur: sum('gain_eur') };
+    });
+  }
+
+  function remainingLots(key, sims) {
+    const position = taxPosition(key);
+    if (!position) return [];
+    const lots = position.lots.map((lot) => ({ ...lot }));
+    for (const sim of sims.filter((s) => s.key === key)) {
+      let left = sim.qty;
+      for (const lot of lots) {
+        if (left <= 1e-8) break;
+        const take = Math.min(lot.qty, left);
+        lot.qty -= take;
+        left -= take;
+      }
+    }
+    return lots.filter((lot) => lot.qty > 1e-8);
+  }
+
+  function realisedTaxResult(year) {
+    const pieces = (state.capitalGains?.sales || []).filter((s) => s.year === year).flatMap((s) => s.pieces);
+    return {
+      gains: pieces.reduce((s, p) => s + Math.max(0, p.gain_eur), 0),
+      losses: pieces.reduce((s, p) => s + Math.min(0, p.gain_eur), 0),
+    };
+  }
+
+  function taxAdjustment(year) {
+    return Number(readStored(TAX_ADJUST_KEY, {})[year]) || 0;
+  }
+
+  // €1,000 of an unused exemption carries over per year, up to €15,000 in total.
+  function taxExemption(year) {
+    const { rules } = state.capitalGains;
+    let carry = 0;
+    for (let y = Number(rules.start.slice(0, 4)); y < year; y += 1) {
+      const exemption = rules.exemption + carry;
+      const { gains, losses } = realisedTaxResult(y);
+      const used = Math.min(exemption, Math.max(0, gains + losses + taxAdjustment(y)));
+      carry = Math.min(rules.exemptionMax - rules.exemption, Math.min(exemption - used, carry + rules.exemptionCarryPerYear));
+    }
+    return { amount: rules.exemption + carry, carry };
+  }
+
+  function taxTotals(year, simulated = []) {
+    const { rules } = state.capitalGains;
+    const realised = realisedTaxResult(year);
+    const simPieces = simulated.flatMap((s) => s.pieces);
+    const gains = realised.gains + simPieces.reduce((s, p) => s + Math.max(0, p.gain_eur), 0);
+    const losses = realised.losses + simPieces.reduce((s, p) => s + Math.min(0, p.gain_eur), 0);
+    const adjustment = taxAdjustment(year);
+    const net = gains + losses + adjustment;
+    const exemption = taxExemption(year);
+    const taxable = Math.max(0, net - exemption.amount);
+    return {
+      gains,
+      losses,
+      adjustment,
+      net,
+      exemption,
+      exemptionLeft: Math.max(0, exemption.amount - net),
+      taxable,
+      tax: taxable * rules.rate,
+    };
+  }
+
+  // Largest quantity of `key` that still keeps the year's tax at zero.
+  function taxFreeQty(key, sims, year) {
+    const position = taxPosition(key);
+    if (!position || position.price_eur == null) return 0;
+    const room = taxTotals(year, simulateTaxSales(sims, year)).exemptionLeft;
+    let best = 0;
+    let soldBefore = 0;
+    let gainBefore = 0;
+    for (const lot of remainingLots(key, sims)) {
+      const slope = taxPiece(lot, 1, position.price_eur, year).gain_eur;
+      const gainAll = gainBefore + slope * lot.qty;
+      if (gainAll <= room + 1e-9) best = soldBefore + lot.qty;
+      else if (slope > 0 && gainBefore <= room) best = soldBefore + (room - gainBefore) / slope;
+      soldBefore += lot.qty;
+      gainBefore = gainAll;
+    }
+    return wholeShares(position) ? Math.floor(best + 1e-9) : Math.floor(best * 1e4) / 1e4;
+  }
+
+  function draftTaxSim() {
+    const key = $('tax-sim-position')?.value;
+    const position = taxPosition(key);
+    const amount = Number($('tax-sim-amount')?.value);
+    if (!position || position.price_eur == null || !(amount > 0)) return null;
+    const available = remainingLots(key, state.taxSims).reduce((s, lot) => s + lot.qty, 0);
+    let qty = state.taxSimMode === 'eur' ? amount / position.price_eur : amount;
+    qty = wholeShares(position) ? Math.floor(qty + 1e-9) : Math.round(qty * 1e4) / 1e4;
+    qty = Math.min(qty, available);
+    return qty > 0 ? { key, qty } : null;
+  }
+
+  // A single lot's gain equals the sale's, so it is only repeated for splits.
+  function taxPieceLine(piece, _index, pieces) {
+    const perShare = piece.qty ? piece.basis_eur / piece.qty : 0;
+    const basis = `€${perShare.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+    let note = `${formatShareCount(piece.qty)} bought ${formatDay(piece.acquired)} · basis ${basis} (${TAX_BASIS_LABELS[piece.method]})`;
+    if (piece.method === 'historical' && piece.gain_eur === 0) note += ' · gain capped at €0';
+    return `
+      <div class="tax-piece">
+        <span>${note}</span>
+        ${pieces?.length > 1 ? `<span class="tax-num ${numberClass(piece.gain_eur)}">${formatSignedEur(piece.gain_eur)}</span>` : ''}
+      </div>`;
+  }
+
+  function renderTaxYearButtons(years) {
+    const seg = $('tax-year');
+    seg.hidden = years.length < 2;
+    seg.innerHTML = years.map((y) => `<button type="button" data-tax-year="${y}" class="${y === state.taxYear ? 'active' : ''}">${y}</button>`).join('');
+    syncSegIndicator(seg);
+  }
+
+  function renderTaxSummary(year, realised, withSims, hasSims) {
+    const { rules } = state.capitalGains;
+    const shown = hasSims ? withSims : realised;
+    const exemption = shown.exemption.amount;
+    const pct = (value) => Math.min(100, Math.max(0, (value / exemption) * 100));
+    const realisedFill = pct(Math.max(0, realised.net));
+    const simFill = Math.max(0, pct(Math.max(0, withSims.net)) - realisedFill);
+    const over = shown.taxable > 0;
+    const simDelta = withSims.net - realised.net;
+    $('tax-summary').innerHTML = `
+      <div class="tax-hero">
+        <div class="summary-label">${hasSims ? `Result ${year} with what-if` : `Realised result ${year}`}</div>
+        <div class="summary-value ${numberClass(shown.net)}">${shown.net < 0 ? '-' : ''}${formatEurHtml(shown.net)}</div>
+        ${hasSims
+          ? `<div class="summary-change"><span class="summary-horizon">Realised</span><span class="${numberClass(realised.net)}">${formatSignedEur(realised.net)}</span><span class="summary-horizon">what-if</span><span class="${numberClass(simDelta)}">${formatSignedEur(simDelta)}</span></div>`
+          : ''}
+      </div>
+      <div class="tax-meter${over ? ' is-over' : ''}" role="img" aria-label="${formatEur(Math.max(0, shown.net))} of the ${formatEur(exemption)} exemption used">
+        <span class="tax-meter-fill" style="width:${realisedFill}%"></span>
+        <span class="tax-meter-fill is-sim" style="left:${realisedFill}%;width:${simFill}%"></span>
+      </div>
+      <div class="tax-meter-scale"><span>€0</span><span>${formatCompactEur(exemption)} tax-free</span></div>
+      <div class="tax-stats">
+        <div class="tax-stat"><span>Exemption left</span><strong>${formatEurHtml(shown.exemptionLeft)}</strong></div>
+        <div class="tax-stat"><span>Taxable</span><strong>${formatEurHtml(shown.taxable)}</strong></div>
+        <div class="tax-stat"><span>Tax ${Math.round(rules.rate * 100)}%</span><strong class="${over ? 'negative' : ''}">${formatEurHtml(shown.tax)}</strong></div>
+      </div>
+      <p class="tax-note">${over
+        ? `Declare the gain in your tax return for income ${year}; DEGIRO does not withhold this tax.`
+        : `Nothing to pay on ${year} so far. Unrealised gains are not taxed until you sell.`}</p>`;
+  }
+
+  function renderTaxBreakdown(realised, withSims, hasSims) {
+    const { rules } = state.capitalGains;
+    const row = (label, a, b, { cls = '', fmt = formatSignedEur, note = '' } = {}) => `
+      <div class="tax-row ${cls}">
+        <span class="tax-row-label">${label}${note ? `<small>${note}</small>` : ''}</span>
+        <span class="tax-num ${fmt === formatSignedEur ? numberClass(a) : ''}">${fmt(a)}</span>
+        ${hasSims ? `<span class="tax-num ${fmt === formatSignedEur ? numberClass(b) : ''}">${fmt(b)}</span>` : ''}
+      </div>`;
+    const carry = withSims.exemption.carry;
+    $('tax-breakdown').innerHTML = `
+      <div class="tax-table${hasSims ? ' has-sim' : ''}">
+        ${hasSims ? '<div class="tax-row tax-row-head"><span></span><span class="tax-num">Realised</span><span class="tax-num">With what-if</span></div>' : ''}
+        ${row('Gains on sales', realised.gains, withSims.gains)}
+        ${row('Losses on sales', realised.losses, withSims.losses, { note: 'Offset against gains of the same year' })}
+        ${realised.adjustment ? row('Other brokers', realised.adjustment, withSims.adjustment) : ''}
+        ${row('Net result', realised.net, withSims.net, { cls: 'tax-row-total' })}
+        ${row('Exemption', realised.exemption.amount, withSims.exemption.amount, { fmt: (v) => `-${formatEur(v)}`, note: carry ? `${formatCompactEur(rules.exemption)} + ${formatCompactEur(carry)} carried over` : 'Per person, per year' })}
+        ${row('Taxable', realised.taxable, withSims.taxable, { fmt: formatEur, cls: 'tax-row-total' })}
+        ${row(`Tax at ${Math.round(rules.rate * 100)}%`, realised.tax, withSims.tax, { fmt: formatEur, cls: 'tax-row-strong' })}
+      </div>`;
+  }
+
+  function renderTaxSales(year) {
+    const sales = state.capitalGains.sales.filter((s) => s.year === year);
+    $('tax-sales-title').textContent = `Sales in ${year}`;
+    if (!sales.length) {
+      $('tax-sales').innerHTML = `<div class="muted-empty">No DEGIRO sales in ${year}.</div>`;
+      return;
+    }
+    $('tax-sales').innerHTML = `<div class="tax-sale-list">${sales.map((sale) => `
+      <details class="tax-sale">
+        <summary>
+          <span class="with-avatar">
+            ${positionAvatar(sale.name)}
+            <span class="with-avatar-text">
+              <span class="holding-name" title="${escapeHtml(sale.name)}">${escapeHtml(positionTitle(sale.name))}</span>
+              <span class="holding-meta">${formatDay(sale.date)} · ${formatShareCount(sale.quantity)} @ ${formatPrice(sale.price, sale.currency)}</span>
+            </span>
+          </span>
+          <span class="tax-sale-right">
+            <span class="tax-num ${numberClass(sale.gain_eur)}">${formatSignedEur(sale.gain_eur)}</span>
+            <small>${formatEur(sale.proceeds_eur)} − ${formatEur(sale.basis_eur)}</small>
+          </span>
+        </summary>
+        <div class="tax-pieces">${sale.pieces.map(taxPieceLine).join('')}</div>
+      </details>`).join('')}</div>`;
+  }
+
+  function renderTaxRules() {
+    const { rules } = state.capitalGains;
+    const pct = Math.round(rules.rate * 100);
+    $('tax-rules-list').innerHTML = [
+      `${pct}% on the net result of sales from ${formatDay(rules.start)}. Unrealised gains are not taxed.`,
+      `The first ${formatCompactEur(rules.exemption)} of net gains per person per year are exempt. An unused exemption adds up to ${formatCompactEur(rules.exemptionCarryPerYear)} to the next year, up to ${formatCompactEur(rules.exemptionMax)}.`,
+      `Shares bought before ${formatDay(rules.start)} use their price on ${formatDay(rules.photoDate)} as purchase value. Until ${rules.historicalUntilYear} a higher original purchase price may be used instead; it can bring a gain down to €0 but never creates a loss.`,
+      'Losses are offset against gains of the same year only; they do not carry over.',
+      'Gross prices: fees and TOB do not lower the gain. Shares leave oldest first (FIFO).',
+      'Other-broker holdings have no sale history here; enter their realised result manually.',
+      'An estimate from the data in this app, not tax advice.',
+    ].map((text) => `<li>${escapeHtml(text)}</li>`).join('');
+  }
+
+  function renderTaxSimForm(year) {
+    const isCurrent = year === currentTaxYear();
+    $('tax-sim-panel').hidden = !isCurrent;
+    if (!isCurrent) return;
+    const select = $('tax-sim-position');
+    const previous = select.value;
+    const positions = state.capitalGains.positions.filter((p) => p.price_eur != null);
+    select.innerHTML = positions.map((p) => `<option value="${p.key}">${escapeHtml(positionTitle(p.name))} · ${formatShares(p.shares)} @ ${formatPrice(p.price_eur, 'EUR')}</option>`).join('');
+    if (positions.some((p) => p.key === previous)) select.value = previous;
+    $('tax-sim-mode').querySelectorAll('[data-sim-mode]').forEach((btn) => btn.classList.toggle('active', btn.dataset.simMode === state.taxSimMode));
+    syncSegIndicator($('tax-sim-mode'));
+    $('tax-sim-amount').placeholder = state.taxSimMode === 'eur' ? 'Amount in €' : 'Number of shares';
+  }
+
+  function renderTaxSimList(simulated) {
+    $('tax-sim-clear').hidden = !state.taxSims.length;
+    $('tax-sim-list').innerHTML = simulated.length ? `<div class="tax-sim-rows">${simulated.map((sim, i) => `
+      <div class="tax-sim-row">
+        <div class="tax-sim-row-main">
+          <div class="holding-name">${escapeHtml(positionTitle(sim.position?.name || sim.key))}</div>
+          <div class="holding-meta">Sell ${formatShareCount(sim.qty)} ≈ ${formatEur(sim.proceeds_eur)}</div>
+          ${sim.pieces.map(taxPieceLine).join('')}
+        </div>
+        <div class="tax-sim-row-side">
+          <span class="tax-num ${numberClass(sim.gain_eur)}">${formatSignedEur(sim.gain_eur)}</span>
+          <button class="btn btn-ghost btn-icon" type="button" data-tax-sim-remove="${i}" aria-label="Remove simulated sale">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+          </button>
+        </div>
+      </div>`).join('')}</div>` : '';
+  }
+
+  function renderTaxPreview(year, draft) {
+    const key = $('tax-sim-position').value;
+    const position = taxPosition(key);
+    if (!position) {
+      $('tax-sim-preview').innerHTML = '<div class="muted-empty">No open positions with a price.</div>';
+      return;
+    }
+    const freeQty = taxFreeQty(key, state.taxSims, year);
+    const available = remainingLots(key, state.taxSims).reduce((s, lot) => s + lot.qty, 0);
+    const freeText = freeQty >= available - 1e-8
+      ? `All ${formatShareCount(available)} (${formatEur(available * position.price_eur)}) can be sold without tax.`
+      : `Up to ${formatShareCount(freeQty)} (${formatEur(freeQty * position.price_eur)}) can be sold without tax.`;
+    let draftHtml = '';
+    if (draft) {
+      const [sim] = simulateTaxSales([...state.taxSims, draft], year).slice(-1);
+      draftHtml = `
+        <div class="tax-draft">
+          <div class="tax-draft-head">
+            <span>Sell ${formatShareCount(sim.qty)} ≈ ${formatEur(sim.proceeds_eur)}</span>
+            <span class="tax-num ${numberClass(sim.gain_eur)}">${formatSignedEur(sim.gain_eur)}</span>
+          </div>
+          ${sim.pieces.map(taxPieceLine).join('')}
+        </div>`;
+    }
+    $('tax-sim-preview').innerHTML = `
+      ${draftHtml}
+      <div class="tax-free-hint">
+        <span>${freeText}</span>
+        ${freeQty > 0 ? `<button class="btn btn-outline btn-tiny" type="button" data-tax-fill="${freeQty}">Use</button>` : ''}
+      </div>`;
+  }
+
+  // Re-renders everything that depends on the what-if sales, not the form.
+  function updateTaxResults() {
+    const data = state.capitalGains;
+    if (!data) return;
+    const year = state.taxYear;
+    const isCurrent = year === currentTaxYear();
+    const draft = isCurrent ? draftTaxSim() : null;
+    const sims = isCurrent ? [...state.taxSims, ...(draft ? [draft] : [])] : [];
+    const simulated = simulateTaxSales(sims, year);
+    const realised = taxTotals(year);
+    const withSims = taxTotals(year, simulated);
+    const hasSims = simulated.length > 0;
+    renderTaxSummary(year, realised, withSims, hasSims);
+    renderTaxBreakdown(realised, withSims, hasSims);
+    if (isCurrent) {
+      renderTaxSimList(simulateTaxSales(state.taxSims, year));
+      renderTaxPreview(year, draft);
+    }
+  }
+
+  function renderTax() {
+    const data = state.capitalGains;
+    if (!data) {
+      $('tax-summary').innerHTML = '<div class="muted-empty">Capital gains appear once transactions are imported.</div>';
+      return;
+    }
+    const years = taxYears();
+    if (!years.includes(state.taxYear)) state.taxYear = years.includes(currentTaxYear()) ? currentTaxYear() : years[years.length - 1];
+    const year = state.taxYear;
+    $('tax-summary-title').textContent = `Capital gains ${year}`;
+    $('tax-adjust').value = taxAdjustment(year) || '';
+    state.taxSims = state.taxSims.filter((sim) => taxPosition(sim.key));
+    renderTaxYearButtons(years);
+    renderTaxRules();
+    renderTaxSales(year);
+    renderTaxSimForm(year);
+    updateTaxResults();
+    if (data.warnings?.length) {
+      $('tax-sales').insertAdjacentHTML('afterbegin', data.warnings.map((w) => `<p class="tax-warning">${escapeHtml(w)}</p>`).join(''));
+    }
+  }
+
+  function saveTaxSims() {
+    writeStored(TAX_SIMS_KEY, state.taxSims);
+  }
+
+  async function loadCapitalGains({ fromCache = false } = {}) {
+    try {
+      const url = '/api/capital-gains';
+      const data = fromCache ? readCache(url) : await fetchJson(url);
+      if (!data?.rules) return;
+      state.capitalGains = data;
+      renderTax();
+    } catch (err) {
+      console.error('Failed to load capital gains', err);
+    }
+  }
+
+  function bindTaxEvents() {
+    const storedSims = readStored(TAX_SIMS_KEY, []);
+    state.taxSims = Array.isArray(storedSims) ? storedSims.filter((sim) => sim?.key && sim.qty > 0) : [];
+    state.taxSimMode = readStored('taxSimMode', 'shares') === 'eur' ? 'eur' : 'shares';
+    $('tax-year').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-tax-year]');
+      if (!btn) return;
+      state.taxYear = Number(btn.dataset.taxYear);
+      renderTax();
+    });
+    $('tax-sim-mode').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-sim-mode]');
+      if (!btn || btn.dataset.simMode === state.taxSimMode) return;
+      const position = taxPosition($('tax-sim-position').value);
+      const amount = Number($('tax-sim-amount').value);
+      if (position?.price_eur && amount > 0) {
+        $('tax-sim-amount').value = btn.dataset.simMode === 'eur'
+          ? (amount * position.price_eur).toFixed(2)
+          : String(wholeShares(position) ? Math.floor(amount / position.price_eur) : Math.round((amount / position.price_eur) * 1e4) / 1e4);
+      }
+      state.taxSimMode = btn.dataset.simMode;
+      writeStored('taxSimMode', state.taxSimMode);
+      renderTaxSimForm(state.taxYear);
+      updateTaxResults();
+    });
+    $('tax-sim-position').addEventListener('change', updateTaxResults);
+    $('tax-sim-amount').addEventListener('input', updateTaxResults);
+    $('tax-sim-amount').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') $('tax-sim-add').click();
+    });
+    $('tax-sim-add').addEventListener('click', () => {
+      const draft = draftTaxSim();
+      if (!draft) {
+        $('tax-sim-amount').focus();
+        return;
+      }
+      state.taxSims.push(draft);
+      saveTaxSims();
+      $('tax-sim-amount').value = '';
+      updateTaxResults();
+    });
+    $('tax-sim-clear').addEventListener('click', () => {
+      state.taxSims = [];
+      saveTaxSims();
+      updateTaxResults();
+    });
+    $('tax-sim-list').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-tax-sim-remove]');
+      if (!btn) return;
+      state.taxSims.splice(Number(btn.dataset.taxSimRemove), 1);
+      saveTaxSims();
+      updateTaxResults();
+    });
+    $('tax-sim-preview').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-tax-fill]');
+      if (!btn) return;
+      const qty = Number(btn.dataset.taxFill);
+      const position = taxPosition($('tax-sim-position').value);
+      $('tax-sim-amount').value = state.taxSimMode === 'eur' && position?.price_eur
+        ? (qty * position.price_eur).toFixed(2)
+        : String(qty);
+      updateTaxResults();
+    });
+    $('tax-adjust').addEventListener('input', () => {
+      const all = readStored(TAX_ADJUST_KEY, {});
+      const value = Number($('tax-adjust').value);
+      if (value) all[state.taxYear] = value;
+      else delete all[state.taxYear];
+      writeStored(TAX_ADJUST_KEY, all);
+      updateTaxResults();
+    });
+  }
+
   function setSidebarOpen(open) {
     $('sidebar').classList.toggle('open', open);
     const backdrop = $('sidebar-backdrop');
@@ -3415,6 +3913,7 @@
   async function initialize() {
     initTheme();
     bindEvents();
+    bindTaxEvents();
     bindTouchFeedback();
     bindSheetDrag();
     renderHoldingChangeMode();
@@ -3427,6 +3926,7 @@
       loadPortfolioValuationChart({ fromCache: true }),
       loadHoldings({ fromCache: true }),
       loadPerformance({ fromCache: true }),
+      loadCapitalGains({ fromCache: true }),
     ]);
     const hydrated = Boolean(cachedSummary || cachedChart);
     if (hydrated) {
@@ -3453,6 +3953,7 @@
       loadPerformance(),
       loadOtherBrokersPanel(),
       loadGmailStatus(),
+      loadCapitalGains(),
     ]);
 
     state.hasData = Boolean(

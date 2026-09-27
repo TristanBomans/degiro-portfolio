@@ -2161,6 +2161,193 @@ app.get('/api/performance', (req, res) => {
   res.json({ holdings });
 });
 
+// ─── Capital gains tax (Belgian meerwaardebelasting) ─────────────────
+// 10% on realised gains from 1 Jan 2026. Holdings bought before then take
+// their value on the fiscal photo date as acquisition value; until the end
+// of 2030 a higher, provable purchase price may be used instead, which can
+// reduce a gain to zero but never create a loss. Gains are gross: costs and
+// TOB neither raise the basis nor lower the proceeds. Lots leave FIFO.
+const CAPITAL_GAINS = {
+  start: '2026-01-01',
+  photoDate: '2025-12-31',
+  rate: 0.10,
+  exemption: 10000,
+  exemptionCarryPerYear: 1000,
+  exemptionMax: 15000,
+  historicalUntilYear: 2030,
+};
+
+// A photo price is only trusted when it is from the last days of 2025.
+const PHOTO_PRICE_MIN_DATE = '2025-12-15';
+
+function photoPriceRow(db, table, idColumn, id) {
+  const row = db.prepare(
+    `SELECT close, currency, date FROM ${table}
+     WHERE ${idColumn} = ? AND close IS NOT NULL AND substr(date, 1, 10) <= ?
+     ORDER BY substr(date, 1, 10) DESC, date DESC
+     LIMIT 1`
+  ).get(id, CAPITAL_GAINS.photoDate);
+  if (!row) return null;
+  const day = (row.date || '').split('T')[0];
+  return day >= PHOTO_PRICE_MIN_DATE ? { ...row, day } : null;
+}
+
+// Tax basis for `qty` shares of a lot sold for `proceeds` in `year`.
+function capitalGainPiece(lot, qty, proceeds, year) {
+  const historical = lot.costPerShare * qty;
+  const piece = {
+    acquired: lot.date,
+    qty: roundQty(qty),
+    proceeds_eur: round2(proceeds),
+    historical_basis_eur: round2(historical),
+    photo_basis_eur: null,
+  };
+  if (lot.date >= CAPITAL_GAINS.start) {
+    return { ...piece, basis_eur: round2(historical), method: 'purchase', gain_eur: round2(proceeds - historical) };
+  }
+  if (lot.photoPerShare == null) {
+    return { ...piece, basis_eur: round2(historical), method: 'no-photo', gain_eur: round2(proceeds - historical) };
+  }
+  const photo = lot.photoPerShare * qty;
+  piece.photo_basis_eur = round2(photo);
+  if (proceeds <= photo) {
+    return { ...piece, basis_eur: round2(photo), method: 'photo', gain_eur: round2(proceeds - photo) };
+  }
+  if (historical > photo && year <= CAPITAL_GAINS.historicalUntilYear) {
+    return { ...piece, basis_eur: round2(historical), method: 'historical', gain_eur: round2(Math.max(0, proceeds - historical)) };
+  }
+  return { ...piece, basis_eur: round2(photo), method: 'photo', gain_eur: round2(proceeds - photo) };
+}
+
+function sumPieces(pieces) {
+  const sum = (key) => round2(pieces.reduce((s, p) => s + (p[key] || 0), 0));
+  return { proceeds_eur: sum('proceeds_eur'), basis_eur: sum('basis_eur'), gain_eur: sum('gain_eur') };
+}
+
+function computeCapitalGains(db) {
+  const { globalRates, historicalRates } = loadExchangeRates(db);
+  const allTransactions = db.prepare('SELECT * FROM transactions').all();
+  const rateFor = buildStockRateResolver(allTransactions, globalRates, historicalRates);
+  const sales = [];
+  const positions = [];
+  const warnings = [];
+
+  const stocks = db.prepare('SELECT * FROM stocks WHERE id IN (SELECT DISTINCT stock_id FROM transactions)').all();
+  for (const stock of stocks) {
+    const trans = sortTransactions(allTransactions.filter((t) => t.stock_id === stock.id));
+    const photo = photoPriceRow(db, 'stock_prices', 'stock_id', stock.id);
+    const photoPerShare = photo
+      ? photo.close * rateFor(stock.id, photo.currency || stock.currency, photo.day)
+      : null;
+    const lots = [];
+
+    for (const t of trans) {
+      const qty = Number(t.quantity) || 0;
+      const day = (t.date || '').split('T')[0];
+      const gross = Math.abs(Number(t.value_eur) || 0) || Math.abs(Number(t.total_eur) || 0);
+      if (qty > 0) {
+        lots.push({ date: day, qty, costPerShare: gross / qty, photoPerShare: day < CAPITAL_GAINS.start ? photoPerShare : null });
+        continue;
+      }
+      if (qty >= 0) continue;
+      const sellQty = -qty;
+      const year = Number(day.slice(0, 4));
+      const taxed = day >= CAPITAL_GAINS.start;
+      const pieces = [];
+      let left = sellQty;
+      for (const lot of lots) {
+        if (left <= 1e-8) break;
+        if (lot.qty <= 1e-8) continue;
+        const take = Math.min(lot.qty, left);
+        if (taxed) pieces.push(capitalGainPiece(lot, take, gross * (take / sellQty), year));
+        lot.qty -= take;
+        left -= take;
+      }
+      if (!taxed) continue;
+      if (pieces.some((p) => p.method === 'no-photo')) {
+        warnings.push(`${stock.name}: no price near ${CAPITAL_GAINS.photoDate}; the purchase price was used instead of the photo value.`);
+      }
+      sales.push({
+        year,
+        date: day,
+        key: `s-${stock.id}`,
+        name: stock.name,
+        symbol: stock.yahoo_ticker || stock.symbol,
+        quantity: roundQty(sellQty),
+        price: t.price,
+        currency: t.currency,
+        ...sumPieces(pieces),
+        pieces,
+      });
+    }
+
+    const open = lots.filter((lot) => lot.qty > 1e-8);
+    if (!open.length) continue;
+    const latest = db.prepare(
+      'SELECT close, currency, date FROM stock_prices WHERE stock_id = ? AND close IS NOT NULL ORDER BY date DESC LIMIT 1'
+    ).get(stock.id);
+    const latestDay = latest ? (latest.date || '').split('T')[0] : null;
+    positions.push({
+      key: `s-${stock.id}`,
+      is_manual: false,
+      name: stock.name,
+      symbol: stock.yahoo_ticker || stock.symbol,
+      shares: roundQty(open.reduce((s, lot) => s + lot.qty, 0)),
+      price_eur: latest ? latest.close * rateFor(stock.id, latest.currency || stock.currency, latestDay) : null,
+      price_date: latest?.date ?? null,
+      photo_date: photo?.day ?? null,
+      lots: open.map((lot) => ({
+        acquired: lot.date,
+        qty: roundQty(lot.qty),
+        cost_per_share_eur: lot.costPerShare,
+        photo_per_share_eur: lot.photoPerShare,
+      })),
+    });
+  }
+
+  // Other-broker holdings have no sale history; they are only offered to
+  // the simulator as a single lot.
+  for (const manual of enrichManualHoldings(db)) {
+    if (!(manual.shares > 0)) continue;
+    const acquired = (manual.purchase_date || '').split('T')[0] || null;
+    const photo = photoPriceRow(db, 'manual_holding_prices', 'manual_holding_id', manual.id);
+    const photoCurrency = photo?.currency || manual.currency || 'EUR';
+    const beforeStart = !acquired || acquired < CAPITAL_GAINS.start;
+    positions.push({
+      key: `m-${manual.id}`,
+      is_manual: true,
+      name: manual.name,
+      symbol: manual.symbol,
+      broker: manual.broker,
+      shares: manual.shares,
+      price_eur: manual.total_value_eur != null ? manual.total_value_eur / manual.shares : null,
+      price_date: manual.price_date,
+      photo_date: photo?.day ?? null,
+      lots: [{
+        acquired: acquired || CAPITAL_GAINS.photoDate,
+        qty: manual.shares,
+        cost_per_share_eur: (manual.cost_basis_eur || 0) / manual.shares,
+        photo_per_share_eur: beforeStart && photo
+          ? photo.close * getRateOnDate(photoCurrency, photo.day, globalRates, historicalRates)
+          : null,
+      }],
+    });
+  }
+
+  sales.sort((a, b) => b.date.localeCompare(a.date));
+  positions.sort((a, b) => (b.shares * (b.price_eur || 0)) - (a.shares * (a.price_eur || 0)));
+  return { rules: CAPITAL_GAINS, sales, positions, warnings: [...new Set(warnings)] };
+}
+
+app.get('/api/capital-gains', (_req, res) => {
+  try {
+    res.json(computeCapitalGains(getDb()));
+  } catch (err) {
+    console.error('Capital gains failed', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/stock/:stockId/lot-chart', (req, res) => {
   const db = getDb();
   const qty = Number(req.query.qty);
