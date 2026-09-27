@@ -4056,3 +4056,11 @@ html.dark .dialog {
   margin: 0;
   -webkit-appearance: none;
 }
+
+/* Settings rows lay their spans out as text columns; the avatar stays a centred mark. */
+.settings-row > span.position-avatar {
+  display: grid;
+  flex-direction: initial;
+  gap: 0;
+  place-items: center;
+}
