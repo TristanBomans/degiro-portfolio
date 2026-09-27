@@ -50,6 +50,9 @@
     taxYear: new Date().getFullYear(),
     taxSims: [],
     taxSimMode: 'shares',
+    taxSimKey: null,
+    taxDraftQty: 0,
+    taxFreeQty: 0,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -173,23 +176,29 @@
   const shownNumbers = new Map();
 
   // Numbers that changed since the last render roll to their new value.
-  function animateNumbers(root) {
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function formatNetHtml(value) {
+    return `${value < 0 ? '-' : ''}${formatEurHtml(value)}`;
+  }
+
+  function animateNumbers(root, { instant = false } = {}) {
+    const reduce = instant || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     root.querySelectorAll('[data-num]').forEach((el) => {
       const key = el.dataset.num;
       const to = Number(el.dataset.value);
       const from = shownNumbers.get(key);
       shownNumbers.set(key, to);
+      el.dataset.tween = String((Number(el.dataset.tween) || 0) + 1);
       if (reduce || from == null || !Number.isFinite(to) || Math.abs(from - to) < 0.005) return;
-      const format = { signedEur: formatSignedEur, eurHtml: formatEurHtml }[el.dataset.format] || formatEur;
+      const format = { signedEur: formatSignedEur, eurHtml: formatEurHtml, netHtml: formatNetHtml }[el.dataset.format] || formatEur;
+      const tween = el.dataset.tween;
       const paint = (amount) => {
-        if (el.dataset.format === 'eurHtml') el.innerHTML = format(amount);
+        if (/Html$/.test(el.dataset.format || '')) el.innerHTML = format(amount);
         else el.textContent = format(amount);
       };
       const start = performance.now();
       const duration = 650;
       const step = (now) => {
-        if (!el.isConnected) return;
+        if (!el.isConnected || el.dataset.tween !== tween) return;
         const t = Math.min(1, (now - start) / duration);
         const eased = 1 - (1 - t) ** 3;
         paint(from + (to - from) * eased);
@@ -1214,6 +1223,9 @@
     if (name === 'performance') {
       requestAnimationFrame(() => lotChart.draw());
     }
+    if (name === 'tax') {
+      requestAnimationFrame(playTaxIntro);
+    }
     requestAnimationFrame(updateCompactHeader);
   }
 
@@ -1235,7 +1247,7 @@
     const rect = valueEl?.getBoundingClientRect();
     const compact = Boolean(info && rect?.height && rect.bottom < topbar.getBoundingClientRect().bottom);
     if (compact) {
-      const whole = formatEur(info.value).replace(/\.\d+$/, '');
+      const whole = `${info.signed && info.value < 0 ? '-' : ''}${formatEur(info.value).replace(/\.\d+$/, '')}`;
       $('topbar-compact').innerHTML = `<span class="topbar-compact-value">${whole}</span>${info.change?.pct != null
         ? `<span class="topbar-compact-change ${numberClass(info.change.eur)}">${formatPct(info.change.pct)}${info.change.horizon ? ` <em>${escapeHtml(info.change.horizon)}</em>` : ''}</span>`
         : ''}`;
@@ -3346,27 +3358,47 @@
     return wholeShares(position) ? Math.floor(best + 1e-9) : Math.floor(best * 1e4) / 1e4;
   }
 
-  function draftTaxSim() {
-    const key = $('tax-sim-position')?.value;
-    const position = taxPosition(key);
-    const amount = Number($('tax-sim-amount')?.value);
-    if (!position || position.price_eur == null || !(amount > 0)) return null;
-    const available = remainingLots(key, state.taxSims).reduce((s, lot) => s + lot.qty, 0);
-    let qty = state.taxSimMode === 'eur' ? amount / position.price_eur : amount;
-    qty = wholeShares(position) ? Math.floor(qty + 1e-9) : Math.round(qty * 1e4) / 1e4;
-    qty = Math.min(qty, available);
-    return qty > 0 ? { key, qty } : null;
+  function taxAvailable(key, sims = state.taxSims) {
+    return remainingLots(key, sims).reduce((s, lot) => s + lot.qty, 0);
   }
 
-  // A single lot's gain equals the sale's, so it is only repeated for splits.
+  function roundSimQty(position, qty) {
+    return wholeShares(position) ? Math.floor(qty + 1e-9) : Math.floor(qty * 1e4 + 1e-6) / 1e4;
+  }
+
+  function draftTaxSim() {
+    const position = taxPosition(state.taxSimKey);
+    if (!position || position.price_eur == null) return null;
+    const qty = Math.min(state.taxDraftQty || 0, taxAvailable(position.key));
+    return qty > 0 ? { key: position.key, qty } : null;
+  }
+
+  // €860 · €9.6k · €60.3k — for chips and before/after pairs.
+  function formatShortEur(value) {
+    const amount = Math.abs(value);
+    if (amount < 1000) return `€${Math.round(amount).toLocaleString('en-US')}`;
+    const [divisor, suffix] = amount >= 1e6 ? [1e6, 'M'] : [1e3, 'k'];
+    return `€${(amount / divisor).toLocaleString('en-US', { maximumFractionDigits: 1 })}${suffix}`;
+  }
+
+  const TAX_METHOD_BADGES = {
+    purchase: 'Purchase',
+    photo: '31 Dec 2025',
+    historical: 'Historic price',
+    'no-photo': 'Purchase',
+  };
+
   function taxPieceLine(piece, _index, pieces) {
     const perShare = piece.qty ? piece.basis_eur / piece.qty : 0;
     const basis = `€${perShare.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
-    let note = `${formatShareCount(piece.qty)} bought ${formatDay(piece.acquired)} · basis ${basis} (${TAX_BASIS_LABELS[piece.method]})`;
-    if (piece.method === 'historical' && piece.gain_eur === 0) note += ' · gain capped at €0';
+    const capped = piece.method === 'historical' && piece.gain_eur === 0;
     return `
       <div class="tax-piece">
-        <span>${note}</span>
+        <span class="tax-piece-dot" aria-hidden="true"></span>
+        <span class="tax-piece-text">
+          <span>${formatShareCount(piece.qty)} · bought ${formatDay(piece.acquired)}</span>
+          <small>Basis ${basis} <span class="tax-badge is-${piece.method}" title="${escapeHtml(TAX_BASIS_LABELS[piece.method])}">${TAX_METHOD_BADGES[piece.method]}</span>${capped ? ' · capped at €0' : ''}</small>
+        </span>
         ${pieces?.length > 1 ? `<span class="tax-num ${numberClass(piece.gain_eur)}">${formatSignedEur(piece.gain_eur)}</span>` : ''}
       </div>`;
   }
@@ -3378,70 +3410,125 @@
     syncSegIndicator(seg);
   }
 
-  function renderTaxSummary(year, realised, withSims, hasSims) {
+  // Semicircle of the year's exemption: realised gains fill it solid, the
+  // planned sales stack on top striped; past the exemption it turns amber.
+  const TAX_ARC = 'M 18 104 A 86 86 0 0 1 190 104';
+
+  function taxGaugeHtml() {
+    return `
+      <div class="tax-gauge" id="tax-gauge">
+        <svg class="tax-gauge-svg" viewBox="0 0 208 114" aria-hidden="true">
+          <defs>
+            <pattern id="tax-stripes" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <rect width="6" height="6" class="tax-stripe-bg"/>
+              <rect width="3" height="6" class="tax-stripe-fg"/>
+            </pattern>
+          </defs>
+          <path class="tax-gauge-track" d="${TAX_ARC}" pathLength="100"/>
+          <path class="tax-gauge-sim" id="tax-gauge-sim" d="${TAX_ARC}" pathLength="100"/>
+          <path class="tax-gauge-real" id="tax-gauge-real" d="${TAX_ARC}" pathLength="100"/>
+        </svg>
+        <div class="tax-gauge-center">
+          <div class="tax-gauge-label" id="tax-gauge-label"></div>
+          <div class="summary-value tax-gauge-value" id="tax-gauge-value" data-num="tax-net" data-format="netHtml" data-value="0">€0</div>
+          <div class="tax-gauge-sub" id="tax-gauge-sub"></div>
+        </div>
+        <div class="tax-gauge-ends"><span>€0</span><span id="tax-gauge-max"></span></div>
+      </div>
+      <div class="tax-status" id="tax-status"></div>
+      <div class="tax-stats">
+        <div class="tax-stat"><span>Tax-free left</span><strong data-num="tax-left" data-format="eurHtml" data-value="0">€0</strong></div>
+        <div class="tax-stat"><span>Taxable</span><strong data-num="tax-taxable" data-format="eurHtml" data-value="0">€0</strong></div>
+        <div class="tax-stat tax-stat-due" id="tax-stat-due"><span id="tax-stat-due-label">Tax</span><strong data-num="tax-due" data-format="eurHtml" data-value="0">€0</strong></div>
+      </div>`;
+  }
+
+  function setNum(el, value) {
+    if (!el) return;
+    el.dataset.value = String(value);
+    const format = { signedEur: formatSignedEur, eurHtml: formatEurHtml, netHtml: formatNetHtml }[el.dataset.format] || formatEur;
+    if (/Html$/.test(el.dataset.format || '')) el.innerHTML = format(value);
+    else el.textContent = format(value);
+  }
+
+  function renderTaxSummary(year, realised, withSims, hasSims, { zero = false } = {}) {
     const { rules } = state.capitalGains;
+    const root = $('tax-summary');
+    if (!root.querySelector('#tax-gauge')) root.innerHTML = taxGaugeHtml();
     const shown = hasSims ? withSims : realised;
     const exemption = shown.exemption.amount;
-    const pct = (value) => Math.min(100, Math.max(0, (value / exemption) * 100));
-    const realisedFill = pct(Math.max(0, realised.net));
-    const simFill = Math.max(0, pct(Math.max(0, withSims.net)) - realisedFill);
+    const share = (value) => Math.min(100, Math.max(0, (value / exemption) * 100));
+    const real = zero ? 0 : share(Math.max(0, realised.net));
+    const planned = zero ? 0 : Math.max(0, share(Math.max(0, withSims.net)) - real);
     const over = shown.taxable > 0;
-    const simDelta = withSims.net - realised.net;
-    $('tax-summary').innerHTML = `
-      <div class="tax-hero">
-        <div class="summary-label">${hasSims ? `Result ${year} with what-if` : `Realised result ${year}`}</div>
-        <div class="summary-value ${numberClass(shown.net)}">${shown.net < 0 ? '-' : ''}${formatEurHtml(shown.net)}</div>
-        ${hasSims
-          ? `<div class="summary-change"><span class="summary-horizon">Realised</span><span class="${numberClass(realised.net)}">${formatSignedEur(realised.net)}</span><span class="summary-horizon">what-if</span><span class="${numberClass(simDelta)}">${formatSignedEur(simDelta)}</span></div>`
-          : ''}
-      </div>
-      <div class="tax-meter${over ? ' is-over' : ''}" role="img" aria-label="${formatEur(Math.max(0, shown.net))} of the ${formatEur(exemption)} exemption used">
-        <span class="tax-meter-fill" style="width:${realisedFill}%"></span>
-        <span class="tax-meter-fill is-sim" style="left:${realisedFill}%;width:${simFill}%"></span>
-      </div>
-      <div class="tax-meter-scale"><span>€0</span><span>${formatCompactEur(exemption)} tax-free</span></div>
-      <div class="tax-stats">
-        <div class="tax-stat"><span>Exemption left</span><strong>${formatEurHtml(shown.exemptionLeft)}</strong></div>
-        <div class="tax-stat"><span>Taxable</span><strong>${formatEurHtml(shown.taxable)}</strong></div>
-        <div class="tax-stat"><span>Tax ${Math.round(rules.rate * 100)}%</span><strong class="${over ? 'negative' : ''}">${formatEurHtml(shown.tax)}</strong></div>
-      </div>
-      <p class="tax-note">${over
-        ? `Declare the gain in your tax return for income ${year}; DEGIRO does not withhold this tax.`
-        : `Nothing to pay on ${year} so far. Unrealised gains are not taxed until you sell.`}</p>`;
+    const realArc = $('tax-gauge-real');
+    const simArc = $('tax-gauge-sim');
+    realArc.style.strokeDashoffset = String(100 - real);
+    realArc.style.opacity = real > 0.2 ? '1' : '0';
+    simArc.style.strokeDasharray = `${planned} 200`;
+    simArc.style.strokeDashoffset = String(-real);
+    simArc.style.opacity = planned > 0.2 && hasSims ? '1' : '0';
+    $('tax-gauge').classList.toggle('is-over', over);
+    $('tax-gauge').classList.toggle('is-loss', shown.net < 0);
+    $('tax-gauge-label').textContent = hasSims ? 'With your plan' : `Net result ${year}`;
+    setNum($('tax-gauge-value'), zero ? 0 : shown.net);
+    $('tax-gauge-value').classList.toggle('negative', shown.net < 0);
+    $('tax-gauge-sub').innerHTML = hasSims
+      ? `Realised <b class="${numberClass(realised.net)}">${formatSignedEur(realised.net)}</b>`
+      : `${Math.round(share(Math.max(0, shown.net)))}% of exemption used`;
+    $('tax-gauge-max').textContent = formatShortEur(exemption);
+    setNum(root.querySelector('[data-num="tax-left"]'), zero ? 0 : shown.exemptionLeft);
+    setNum(root.querySelector('[data-num="tax-taxable"]'), zero ? 0 : shown.taxable);
+    setNum(root.querySelector('[data-num="tax-due"]'), zero ? 0 : shown.tax);
+    $('tax-stat-due').classList.toggle('is-due', over);
+    $('tax-stat-due-label').textContent = `Tax ${Math.round(rules.rate * 100)}%`;
+    $('tax-status').className = `tax-status ${over ? 'is-due' : 'is-clear'}`;
+    $('tax-status').innerHTML = over
+      ? `<i aria-hidden="true"></i><span><strong>${formatEur(shown.tax)} to declare</strong> for income ${year} · DEGIRO withholds nothing</span>`
+      : `<i aria-hidden="true"></i><span><strong>No tax due</strong>${shown.net < 0 ? ' · the loss offsets gains later this year' : ' · unrealised gains are not taxed'}</span>`;
+    compactHeaders.tax = { value: shown.net, change: null, signed: true };
   }
 
   function renderTaxBreakdown(realised, withSims, hasSims) {
     const { rules } = state.capitalGains;
-    const row = (label, a, b, { cls = '', fmt = formatSignedEur, note = '' } = {}) => `
-      <div class="tax-row ${cls}">
-        <span class="tax-row-label">${label}${note ? `<small>${note}</small>` : ''}</span>
-        <span class="tax-num ${fmt === formatSignedEur ? numberClass(a) : ''}">${fmt(a)}</span>
-        ${hasSims ? `<span class="tax-num ${fmt === formatSignedEur ? numberClass(b) : ''}">${fmt(b)}</span>` : ''}
-      </div>`;
-    const carry = withSims.exemption.carry;
+    const shown = hasSims ? withSims : realised;
+    const row = (key, label, value, before, { cls = '', format = 'signedEur', note = '', sign = '' } = {}) => {
+      const changed = hasSims && Math.abs(value - before) > 0.005;
+      const colour = format === 'signedEur' ? numberClass(value) : '';
+      return `
+        <div class="tax-row ${cls}">
+          <span class="tax-row-label">${label}${note ? `<small>${note}</small>` : ''}</span>
+          <span class="tax-row-value">
+            <span class="tax-num ${colour}">${sign}<span data-num="tax-row-${key}" data-format="${format}" data-value="${value}">${format === 'signedEur' ? formatSignedEur(value) : formatEur(value)}</span></span>
+            ${changed ? `<small class="tax-was">was ${sign}${format === 'signedEur' ? formatSignedEur(before) : formatEur(before)}</small>` : ''}
+          </span>
+        </div>`;
+    };
+    const carry = shown.exemption.carry;
     $('tax-breakdown').innerHTML = `
-      <div class="tax-table${hasSims ? ' has-sim' : ''}">
-        ${hasSims ? '<div class="tax-row tax-row-head"><span></span><span class="tax-num">Realised</span><span class="tax-num">With what-if</span></div>' : ''}
-        ${row('Gains on sales', realised.gains, withSims.gains)}
-        ${row('Losses on sales', realised.losses, withSims.losses, { note: 'Offset against gains of the same year' })}
-        ${realised.adjustment ? row('Other brokers', realised.adjustment, withSims.adjustment) : ''}
-        ${row('Net result', realised.net, withSims.net, { cls: 'tax-row-total' })}
-        ${row('Exemption', realised.exemption.amount, withSims.exemption.amount, { fmt: (v) => `-${formatEur(v)}`, note: carry ? `${formatCompactEur(rules.exemption)} + ${formatCompactEur(carry)} carried over` : 'Per person, per year' })}
-        ${row('Taxable', realised.taxable, withSims.taxable, { fmt: formatEur, cls: 'tax-row-total' })}
-        ${row(`Tax at ${Math.round(rules.rate * 100)}%`, realised.tax, withSims.tax, { fmt: formatEur, cls: 'tax-row-strong' })}
+      <div class="tax-table">
+        ${row('gains', 'Gains on sales', shown.gains, realised.gains)}
+        ${row('losses', 'Losses on sales', shown.losses, realised.losses, { note: 'Offset against gains of the same year' })}
+        ${shown.adjustment ? row('adjust', 'Other brokers', shown.adjustment, realised.adjustment) : ''}
+        ${row('net', 'Net result', shown.net, realised.net, { cls: 'tax-row-total' })}
+        ${row('exemption', 'Exemption', shown.exemption.amount, realised.exemption.amount, { format: 'eur', sign: '−', note: carry ? `${formatCompactEur(rules.exemption)} + ${formatCompactEur(carry)} carried over` : 'Per person, per year' })}
+        ${row('taxable', 'Taxable', shown.taxable, realised.taxable, { format: 'eur', cls: 'tax-row-total' })}
+        ${row('tax', `Tax at ${Math.round(rules.rate * 100)}%`, shown.tax, realised.tax, { format: 'eur', cls: `tax-row-strong${shown.tax > 0 ? ' is-due' : ''}` })}
       </div>`;
   }
 
   function renderTaxSales(year) {
     const sales = state.capitalGains.sales.filter((s) => s.year === year);
     $('tax-sales-title').textContent = `Sales in ${year}`;
+    $('tax-sales-count').textContent = sales.length ? String(sales.length) : '';
+    const warnings = (state.capitalGains.warnings || []).map((w) => `<p class="tax-warning">${escapeHtml(w)}</p>`).join('');
     if (!sales.length) {
-      $('tax-sales').innerHTML = `<div class="muted-empty">No DEGIRO sales in ${year}.</div>`;
+      $('tax-sales').innerHTML = `${warnings}<div class="muted-empty">No DEGIRO sales in ${year}.</div>`;
       return;
     }
-    $('tax-sales').innerHTML = `<div class="tax-sale-list">${sales.map((sale) => `
-      <details class="tax-sale">
-        <summary>
+    $('tax-sales').innerHTML = `${warnings}<div class="tax-sale-list">${sales.map((sale, i) => `
+      <div class="tax-sale tax-accordion" style="--i:${i}">
+        <button class="tax-sale-head tax-accordion-toggle" type="button" aria-expanded="false">
           <span class="with-avatar">
             ${positionAvatar(sale.name)}
             <span class="with-avatar-text">
@@ -3449,13 +3536,22 @@
               <span class="holding-meta">${formatDay(sale.date)} · ${formatShareCount(sale.quantity)} @ ${formatPrice(sale.price, sale.currency)}</span>
             </span>
           </span>
-          <span class="tax-sale-right">
-            <span class="tax-num ${numberClass(sale.gain_eur)}">${formatSignedEur(sale.gain_eur)}</span>
-            <small>${formatEur(sale.proceeds_eur)} − ${formatEur(sale.basis_eur)}</small>
-          </span>
-        </summary>
-        <div class="tax-pieces">${sale.pieces.map(taxPieceLine).join('')}</div>
-      </details>`).join('')}</div>`;
+          <span class="tax-pill ${numberClass(sale.gain_eur)}">${formatSignedEur(sale.gain_eur)}</span>
+          <svg class="tax-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="tax-accordion-body">
+          <div>
+            <div class="tax-sale-math">
+              <span><small>Sold for</small>${formatEur(sale.proceeds_eur)}</span>
+              <span class="tax-sale-op">−</span>
+              <span><small>Tax basis</small>${formatEur(sale.basis_eur)}</span>
+              <span class="tax-sale-op">=</span>
+              <span class="${numberClass(sale.gain_eur)}"><small>Result</small>${formatSignedEur(sale.gain_eur)}</span>
+            </div>
+            <div class="tax-pieces">${sale.pieces.map(taxPieceLine).join('')}</div>
+          </div>
+        </div>
+      </div>`).join('')}</div>`;
   }
 
   function renderTaxRules() {
@@ -3472,72 +3568,180 @@
     ].map((text) => `<li>${escapeHtml(text)}</li>`).join('');
   }
 
+  function renderTaxPicker() {
+    const positions = state.capitalGains.positions.filter((p) => p.price_eur != null);
+    if (!positions.some((p) => p.key === state.taxSimKey)) state.taxSimKey = positions[0]?.key || null;
+    $('tax-sim-positions').innerHTML = positions.map((p) => {
+      const left = taxAvailable(p.key);
+      const selected = p.key === state.taxSimKey;
+      return `
+        <button class="tax-chip${selected ? ' is-selected' : ''}${left <= 1e-8 ? ' is-empty' : ''}" type="button" role="radio" aria-checked="${selected}" data-tax-key="${p.key}">
+          ${positionAvatar(p.name)}
+          <span class="tax-chip-text">
+            <span class="tax-chip-name">${escapeHtml(positionTitle(p.name))}</span>
+            <span class="tax-chip-meta">${left <= 1e-8 ? 'All in plan' : `${formatShares(roundSimQty(p, left))} sh · ${formatShortEur(left * p.price_eur)}`}</span>
+          </span>
+        </button>`;
+    }).join('');
+    return positions.length;
+  }
+
+  function scrollTaxChipIntoView(smooth) {
+    const chip = $('tax-sim-positions').querySelector('.tax-chip.is-selected');
+    const row = $('tax-sim-positions');
+    if (!chip) return;
+    const left = chip.offsetLeft - (row.clientWidth - chip.offsetWidth) / 2;
+    row.scrollTo({ left, behavior: smooth ? 'smooth' : 'auto' });
+  }
+
   function renderTaxSimForm(year) {
     const isCurrent = year === currentTaxYear();
     $('tax-sim-panel').hidden = !isCurrent;
     if (!isCurrent) return;
-    const select = $('tax-sim-position');
-    const previous = select.value;
-    const positions = state.capitalGains.positions.filter((p) => p.price_eur != null);
-    select.innerHTML = positions.map((p) => `<option value="${p.key}">${escapeHtml(positionTitle(p.name))} · ${formatShares(p.shares)} @ ${formatPrice(p.price_eur, 'EUR')}</option>`).join('');
-    if (positions.some((p) => p.key === previous)) select.value = previous;
+    const count = renderTaxPicker();
+    $('tax-sim-panel').classList.toggle('is-empty', !count);
     $('tax-sim-mode').querySelectorAll('[data-sim-mode]').forEach((btn) => btn.classList.toggle('active', btn.dataset.simMode === state.taxSimMode));
     syncSegIndicator($('tax-sim-mode'));
-    $('tax-sim-amount').placeholder = state.taxSimMode === 'eur' ? 'Amount in €' : 'Number of shares';
+    syncTaxAmountInput();
+    requestAnimationFrame(() => scrollTaxChipIntoView(false));
   }
 
-  function renderTaxSimList(simulated) {
-    $('tax-sim-clear').hidden = !state.taxSims.length;
-    $('tax-sim-list').innerHTML = simulated.length ? `<div class="tax-sim-rows">${simulated.map((sim, i) => `
-      <div class="tax-sim-row">
-        <div class="tax-sim-row-main">
-          <div class="holding-name">${escapeHtml(positionTitle(sim.position?.name || sim.key))}</div>
-          <div class="holding-meta">Sell ${formatShareCount(sim.qty)} ≈ ${formatEur(sim.proceeds_eur)}</div>
-          ${sim.pieces.map(taxPieceLine).join('')}
-        </div>
-        <div class="tax-sim-row-side">
-          <span class="tax-num ${numberClass(sim.gain_eur)}">${formatSignedEur(sim.gain_eur)}</span>
-          <button class="btn btn-ghost btn-icon" type="button" data-tax-sim-remove="${i}" aria-label="Remove simulated sale">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
-          </button>
-        </div>
-      </div>`).join('')}</div>` : '';
+  function syncTaxAmountInput() {
+    const position = taxPosition(state.taxSimKey);
+    const eur = state.taxSimMode === 'eur';
+    $('tax-qty-prefix').hidden = !eur;
+    $('tax-qty-unit').textContent = eur ? '' : (Math.abs(state.taxDraftQty - 1) < 1e-8 ? 'share' : 'shares');
+    const input = $('tax-sim-amount');
+    if (document.activeElement !== input) {
+      if (!state.taxDraftQty || !position) input.value = '';
+      else input.value = eur ? (state.taxDraftQty * position.price_eur).toFixed(2) : String(state.taxDraftQty);
+    }
+    sizeTaxAmountInput();
+  }
+
+  // The big amount hugs its digits so the unit sits right behind it.
+  function sizeTaxAmountInput() {
+    const input = $('tax-sim-amount');
+    input.style.width = `${Math.max(1, (input.value || input.placeholder).length) + 0.4}ch`;
+  }
+
+  // The slider's green zone is what can still be sold tax-free; the marker
+  // sits on that limit so dragging past it is felt, not just read.
+  function updateTaxSlider(year) {
+    const position = taxPosition(state.taxSimKey);
+    const range = $('tax-sim-range');
+    const available = position ? taxAvailable(position.key) : 0;
+    const whole = position ? wholeShares(position) : true;
+    const max = whole ? Math.floor(available + 1e-9) : available;
+    range.max = String(max || 1);
+    range.step = whole ? '1' : 'any';
+    range.disabled = !(max > 0);
+    if (Number(range.value) !== state.taxDraftQty) range.value = String(state.taxDraftQty);
+    const freeQty = position ? Math.min(max, taxFreeQty(position.key, state.taxSims, year)) : 0;
+    const pct = (q) => (max > 0 ? Math.min(100, (q / max) * 100) : 0);
+    const slider = $('tax-slider');
+    slider.style.setProperty('--free', `${pct(freeQty)}%`);
+    slider.style.setProperty('--fill', `${pct(state.taxDraftQty)}%`);
+    slider.style.setProperty('--split', `${state.taxDraftQty > 0 ? Math.min(100, (freeQty / state.taxDraftQty) * 100) : 100}%`);
+    slider.classList.toggle('is-over', state.taxDraftQty > freeQty + 1e-9);
+    slider.classList.toggle('all-free', freeQty >= max - 1e-9);
+    $('tax-slider-mark').hidden = !(freeQty > 0 && freeQty < max);
+    $('tax-slider-max').textContent = max > 0 ? formatShares(max) : '—';
+    $('tax-slider-free-label').textContent = !position || max <= 0
+      ? ''
+      : freeQty >= max - 1e-9 ? 'All tax-free' : `Tax-free up to ${formatShares(freeQty)}`;
+    state.taxFreeQty = freeQty;
+    renderTaxQuick(max, freeQty);
+  }
+
+  function renderTaxQuick(max, freeQty) {
+    const position = taxPosition(state.taxSimKey);
+    if (!position || !(max > 0)) {
+      $('tax-quick').innerHTML = '';
+      return;
+    }
+    const options = [
+      ['25%', roundSimQty(position, max * 0.25)],
+      ['50%', roundSimQty(position, max * 0.5)],
+      ...(freeQty > 0 && freeQty < max ? [['Max tax-free', freeQty, 'is-free']] : []),
+      ['All', max],
+    ];
+    $('tax-quick').innerHTML = options.map(([label, qty, cls = '']) => `
+      <button type="button" class="tax-quick-chip ${cls}${Math.abs(qty - state.taxDraftQty) < 1e-8 && qty > 0 ? ' is-active' : ''}" data-tax-qty="${qty}">${label}</button>`).join('');
   }
 
   function renderTaxPreview(year, draft) {
-    const key = $('tax-sim-position').value;
-    const position = taxPosition(key);
+    const position = taxPosition(state.taxSimKey);
+    $('tax-sim-add').disabled = !draft;
     if (!position) {
       $('tax-sim-preview').innerHTML = '<div class="muted-empty">No open positions with a price.</div>';
       return;
     }
-    const freeQty = taxFreeQty(key, state.taxSims, year);
-    const available = remainingLots(key, state.taxSims).reduce((s, lot) => s + lot.qty, 0);
-    const freeText = freeQty >= available - 1e-8
-      ? `All ${formatShareCount(available)} (${formatEur(available * position.price_eur)}) can be sold without tax.`
-      : `Up to ${formatShareCount(freeQty)} (${formatEur(freeQty * position.price_eur)}) can be sold without tax.`;
-    let draftHtml = '';
-    if (draft) {
-      const [sim] = simulateTaxSales([...state.taxSims, draft], year).slice(-1);
-      draftHtml = `
-        <div class="tax-draft">
-          <div class="tax-draft-head">
-            <span>Sell ${formatShareCount(sim.qty)} ≈ ${formatEur(sim.proceeds_eur)}</span>
-            <span class="tax-num ${numberClass(sim.gain_eur)}">${formatSignedEur(sim.gain_eur)}</span>
-          </div>
-          ${sim.pieces.map(taxPieceLine).join('')}
+    if (!draft) {
+      $('tax-sim-preview').innerHTML = `
+        <div class="tax-impact is-idle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 7l-4 5 4 5M16 7l4 5-4 5"/></svg>
+          <span>Drag the slider or pick an amount to see what selling ${escapeHtml(positionTitle(position.name))} would cost.</span>
         </div>`;
+      return;
     }
+    const before = taxTotals(year, simulateTaxSales(state.taxSims, year));
+    const simulated = simulateTaxSales([...state.taxSims, draft], year);
+    const after = taxTotals(year, simulated);
+    const sim = simulated[simulated.length - 1];
+    const taxDelta = after.tax - before.tax;
+    const arrow = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
     $('tax-sim-preview').innerHTML = `
-      ${draftHtml}
-      <div class="tax-free-hint">
-        <span>${freeText}</span>
-        ${freeQty > 0 ? `<button class="btn btn-outline btn-tiny" type="button" data-tax-fill="${freeQty}">Use</button>` : ''}
+      <div class="tax-impact ${taxDelta > 0.005 ? 'is-due' : 'is-free'}">
+        <div class="tax-impact-top">
+          <span>Sell ${formatShareCount(sim.qty)} @ ${formatPrice(position.price_eur, 'EUR')}</span>
+          <span>≈ <b data-num="tax-draft-proceeds" data-format="eur" data-value="${sim.proceeds_eur}">${formatEur(sim.proceeds_eur)}</b></span>
+        </div>
+        <div class="tax-impact-main">
+          <span class="tax-impact-label">Capital gain</span>
+          <strong class="${numberClass(sim.gain_eur)}" data-num="tax-draft-gain" data-format="signedEur" data-value="${sim.gain_eur}">${formatSignedEur(sim.gain_eur)}</strong>
+          <span class="tax-impact-tag">${taxDelta > 0.005 ? `+${formatEur(taxDelta)} tax` : 'Tax-free'}</span>
+        </div>
+        <div class="tax-impact-grid">
+          <div><span>Tax</span><b>${formatEur(before.tax)} ${arrow} <em class="${taxDelta > 0.005 ? 'is-up' : ''}">${formatEur(after.tax)}</em></b></div>
+          <div><span>Tax-free left</span><b>${formatShortEur(before.exemptionLeft)} ${arrow} <em>${formatShortEur(after.exemptionLeft)}</em></b></div>
+        </div>
+        <div class="tax-pieces">${sim.pieces.map(taxPieceLine).join('')}</div>
       </div>`;
   }
 
-  // Re-renders everything that depends on the what-if sales, not the form.
-  function updateTaxResults() {
+  function renderTaxSimList({ enter = -1 } = {}) {
+    const year = state.taxYear;
+    const simulated = simulateTaxSales(state.taxSims, year);
+    $('tax-sim-clear').hidden = !state.taxSims.length;
+    if (!simulated.length) {
+      $('tax-sim-list').innerHTML = '';
+      return;
+    }
+    const total = simulated.reduce((s, sim) => s + sim.gain_eur, 0);
+    $('tax-sim-list').innerHTML = `
+      <div class="tax-plan">
+        <div class="tax-plan-head"><span>Your plan · ${simulated.length} ${simulated.length === 1 ? 'sale' : 'sales'}</span><span class="tax-num ${numberClass(total)}">${formatSignedEur(total)}</span></div>
+        ${simulated.map((sim, i) => `
+          <div class="tax-plan-row${i === enter ? ' is-entering' : ''}" data-tax-plan-row="${i}">
+            <div class="tax-plan-inner">
+              ${positionAvatar(sim.position?.name || sim.key)}
+              <span class="tax-plan-text">
+                <span class="holding-name">${escapeHtml(positionTitle(sim.position?.name || sim.key))}</span>
+                <span class="holding-meta">Sell ${formatShareCount(sim.qty)} · ${formatEur(sim.proceeds_eur)}</span>
+              </span>
+              <span class="tax-pill ${numberClass(sim.gain_eur)}">${formatSignedEur(sim.gain_eur)}</span>
+              <button class="btn btn-ghost btn-icon tax-plan-remove" type="button" data-tax-sim-remove="${i}" aria-label="Remove from plan">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+              </button>
+            </div>
+          </div>`).join('')}
+      </div>`;
+  }
+
+  // Re-renders everything that depends on the draft and the plan, leaving
+  // the inputs alone so typing and dragging are never interrupted.
+  function updateTaxResults({ instant = false, zero = false } = {}) {
     const data = state.capitalGains;
     if (!data) return;
     const year = state.taxYear;
@@ -3548,12 +3752,15 @@
     const realised = taxTotals(year);
     const withSims = taxTotals(year, simulated);
     const hasSims = simulated.length > 0;
-    renderTaxSummary(year, realised, withSims, hasSims);
+    renderTaxSummary(year, realised, withSims, hasSims, { zero });
     renderTaxBreakdown(realised, withSims, hasSims);
     if (isCurrent) {
-      renderTaxSimList(simulateTaxSales(state.taxSims, year));
+      updateTaxSlider(year);
       renderTaxPreview(year, draft);
+      syncTaxAmountInput();
     }
+    if (!zero) animateNumbers($('view-tax'), { instant });
+    updateCompactHeader();
   }
 
   function renderTax() {
@@ -3566,16 +3773,27 @@
     if (!years.includes(state.taxYear)) state.taxYear = years.includes(currentTaxYear()) ? currentTaxYear() : years[years.length - 1];
     const year = state.taxYear;
     $('tax-summary-title').textContent = `Capital gains ${year}`;
-    $('tax-adjust').value = taxAdjustment(year) || '';
+    if (document.activeElement !== $('tax-adjust')) $('tax-adjust').value = taxAdjustment(year) || '';
     state.taxSims = state.taxSims.filter((sim) => taxPosition(sim.key));
     renderTaxYearButtons(years);
     renderTaxRules();
     renderTaxSales(year);
     renderTaxSimForm(year);
+    renderTaxSimList();
     updateTaxResults();
-    if (data.warnings?.length) {
-      $('tax-sales').insertAdjacentHTML('afterbegin', data.warnings.map((w) => `<p class="tax-warning">${escapeHtml(w)}</p>`).join(''));
-    }
+  }
+
+  // Entering the tab draws the gauge and rolls the figures up from zero.
+  function playTaxIntro() {
+    if (!state.capitalGains || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    $('view-tax').querySelectorAll('[data-num]').forEach((el) => shownNumbers.set(el.dataset.num, 0));
+    const gauge = $('tax-gauge');
+    if (!gauge) return;
+    gauge.classList.add('no-transition');
+    updateTaxResults({ zero: true });
+    void gauge.offsetWidth;
+    gauge.classList.remove('no-transition');
+    requestAnimationFrame(() => updateTaxResults());
   }
 
   function saveTaxSims() {
@@ -3594,68 +3812,120 @@
     }
   }
 
+  function toggleAccordion(root) {
+    const toggle = root.querySelector('.tax-accordion-toggle');
+    const open = !root.classList.contains('is-open');
+    root.classList.toggle('is-open', open);
+    toggle.setAttribute('aria-expanded', String(open));
+  }
+
+  function setTaxDraftQty(qty, { from = '' } = {}) {
+    const position = taxPosition(state.taxSimKey);
+    if (!position) return;
+    const max = taxAvailable(position.key);
+    const next = Math.max(0, Math.min(roundSimQty(position, max) || max, roundSimQty(position, qty)));
+    const crossed = (state.taxDraftQty <= state.taxFreeQty) !== (next <= state.taxFreeQty);
+    state.taxDraftQty = next;
+    if (from === 'range' && crossed) navigator.vibrate?.(8);
+    updateTaxResults({ instant: from === 'range' || from === 'input' });
+  }
+
   function bindTaxEvents() {
     const storedSims = readStored(TAX_SIMS_KEY, []);
     state.taxSims = Array.isArray(storedSims) ? storedSims.filter((sim) => sim?.key && sim.qty > 0) : [];
     state.taxSimMode = readStored('taxSimMode', 'shares') === 'eur' ? 'eur' : 'shares';
+
     $('tax-year').addEventListener('click', (e) => {
       const btn = e.target.closest('[data-tax-year]');
       if (!btn) return;
       state.taxYear = Number(btn.dataset.taxYear);
+      state.taxDraftQty = 0;
       renderTax();
+    });
+    $('tax-sim-positions').addEventListener('click', (e) => {
+      const chip = e.target.closest('[data-tax-key]');
+      if (!chip || chip.dataset.taxKey === state.taxSimKey) return;
+      state.taxSimKey = chip.dataset.taxKey;
+      state.taxDraftQty = 0;
+      $('tax-sim-positions').querySelectorAll('.tax-chip').forEach((el) => {
+        const on = el === chip;
+        el.classList.toggle('is-selected', on);
+        el.setAttribute('aria-checked', String(on));
+      });
+      scrollTaxChipIntoView(true);
+      $('tax-sim-amount').value = '';
+      updateTaxResults();
     });
     $('tax-sim-mode').addEventListener('click', (e) => {
       const btn = e.target.closest('[data-sim-mode]');
       if (!btn || btn.dataset.simMode === state.taxSimMode) return;
-      const position = taxPosition($('tax-sim-position').value);
-      const amount = Number($('tax-sim-amount').value);
-      if (position?.price_eur && amount > 0) {
-        $('tax-sim-amount').value = btn.dataset.simMode === 'eur'
-          ? (amount * position.price_eur).toFixed(2)
-          : String(wholeShares(position) ? Math.floor(amount / position.price_eur) : Math.round((amount / position.price_eur) * 1e4) / 1e4);
-      }
       state.taxSimMode = btn.dataset.simMode;
       writeStored('taxSimMode', state.taxSimMode);
-      renderTaxSimForm(state.taxYear);
-      updateTaxResults();
+      $('tax-sim-mode').querySelectorAll('[data-sim-mode]').forEach((b) => b.classList.toggle('active', b === btn));
+      syncSegIndicator($('tax-sim-mode'));
+      $('tax-sim-amount').blur();
+      syncTaxAmountInput();
     });
-    $('tax-sim-position').addEventListener('change', updateTaxResults);
-    $('tax-sim-amount').addEventListener('input', updateTaxResults);
+    $('tax-sim-range').addEventListener('input', () => {
+      $('tax-sim-amount').blur();
+      setTaxDraftQty(Number($('tax-sim-range').value), { from: 'range' });
+    });
+    $('tax-sim-range').addEventListener('change', () => animateNumbers($('view-tax')));
+    $('tax-sim-amount').addEventListener('input', () => {
+      sizeTaxAmountInput();
+      const position = taxPosition(state.taxSimKey);
+      const amount = Number($('tax-sim-amount').value) || 0;
+      if (!position?.price_eur) return;
+      setTaxDraftQty(state.taxSimMode === 'eur' ? amount / position.price_eur : amount, { from: 'input' });
+    });
+    $('tax-sim-amount').addEventListener('blur', syncTaxAmountInput);
     $('tax-sim-amount').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') $('tax-sim-add').click();
     });
+    $('tax-quick').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-tax-qty]');
+      if (!btn) return;
+      $('tax-sim-amount').blur();
+      setTaxDraftQty(Number(btn.dataset.taxQty));
+    });
     $('tax-sim-add').addEventListener('click', () => {
       const draft = draftTaxSim();
-      if (!draft) {
-        $('tax-sim-amount').focus();
-        return;
-      }
+      if (!draft) return;
       state.taxSims.push(draft);
+      state.taxDraftQty = 0;
       saveTaxSims();
-      $('tax-sim-amount').value = '';
+      renderTaxPicker();
+      renderTaxSimList({ enter: state.taxSims.length - 1 });
       updateTaxResults();
     });
     $('tax-sim-clear').addEventListener('click', () => {
-      state.taxSims = [];
-      saveTaxSims();
-      updateTaxResults();
+      const rows = [...$('tax-sim-list').querySelectorAll('.tax-plan-row')];
+      rows.forEach((row) => row.classList.add('is-leaving'));
+      setTimeout(() => {
+        state.taxSims = [];
+        saveTaxSims();
+        renderTaxPicker();
+        renderTaxSimList();
+        updateTaxResults();
+      }, rows.length ? 220 : 0);
     });
     $('tax-sim-list').addEventListener('click', (e) => {
       const btn = e.target.closest('[data-tax-sim-remove]');
       if (!btn) return;
-      state.taxSims.splice(Number(btn.dataset.taxSimRemove), 1);
-      saveTaxSims();
-      updateTaxResults();
+      const index = Number(btn.dataset.taxSimRemove);
+      const row = btn.closest('.tax-plan-row');
+      row.classList.add('is-leaving');
+      setTimeout(() => {
+        state.taxSims.splice(index, 1);
+        saveTaxSims();
+        renderTaxPicker();
+        renderTaxSimList();
+        updateTaxResults();
+      }, 220);
     });
-    $('tax-sim-preview').addEventListener('click', (e) => {
-      const btn = e.target.closest('[data-tax-fill]');
-      if (!btn) return;
-      const qty = Number(btn.dataset.taxFill);
-      const position = taxPosition($('tax-sim-position').value);
-      $('tax-sim-amount').value = state.taxSimMode === 'eur' && position?.price_eur
-        ? (qty * position.price_eur).toFixed(2)
-        : String(qty);
-      updateTaxResults();
+    $('view-tax').addEventListener('click', (e) => {
+      const toggle = e.target.closest('.tax-accordion-toggle');
+      if (toggle) toggleAccordion(toggle.closest('.tax-accordion'));
     });
     $('tax-adjust').addEventListener('input', () => {
       const all = readStored(TAX_ADJUST_KEY, {});
@@ -3663,7 +3933,7 @@
       if (value) all[state.taxYear] = value;
       else delete all[state.taxYear];
       writeStored(TAX_ADJUST_KEY, all);
-      updateTaxResults();
+      updateTaxResults({ instant: true });
     });
   }
 

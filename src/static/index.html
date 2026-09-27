@@ -252,29 +252,44 @@
                 <div class="panel-header">
                   <div>
                     <div class="panel-kicker">What if</div>
-                    <h2>Simulate a sale</h2>
+                    <h2>Plan a sale</h2>
                   </div>
-                  <button class="btn btn-ghost" id="tax-sim-clear" type="button" hidden>Clear</button>
+                  <button class="btn btn-ghost btn-tiny" id="tax-sim-clear" type="button" hidden>Clear plan</button>
                 </div>
-                <div class="panel-body">
-                  <div class="tax-sim-form">
-                    <label class="tax-field tax-field-position">
-                      <span>Position</span>
-                      <select id="tax-sim-position"></select>
-                    </label>
-                    <div class="tax-field tax-field-amount">
-                      <span class="tax-field-label">
-                        <span>Sell</span>
-                        <span class="seg seg-compact" id="tax-sim-mode" role="group" aria-label="Amount in">
-                          <button type="button" data-sim-mode="shares">Shares</button>
-                          <button type="button" data-sim-mode="eur">€</button>
-                        </span>
-                      </span>
-                      <input id="tax-sim-amount" type="number" inputmode="decimal" min="0" step="any" aria-label="Amount to sell">
+                <div class="panel-body tax-sim-body">
+                  <div class="tax-picker" id="tax-sim-positions" role="radiogroup" aria-label="Position to sell"></div>
+                  <div class="tax-qty">
+                    <div class="tax-qty-head">
+                      <label class="tax-qty-input">
+                        <span class="tax-qty-prefix" id="tax-qty-prefix" hidden>€</span>
+                        <input id="tax-sim-amount" type="number" inputmode="decimal" min="0" step="any" placeholder="0" aria-label="Amount to sell">
+                        <span class="tax-qty-unit" id="tax-qty-unit">shares</span>
+                      </label>
+                      <div class="seg seg-compact" id="tax-sim-mode" role="group" aria-label="Amount in">
+                        <button type="button" data-sim-mode="shares">Shares</button>
+                        <button type="button" data-sim-mode="eur">€</button>
+                      </div>
                     </div>
-                    <button class="btn btn-primary tax-sim-add" id="tax-sim-add" type="button">Add sale</button>
+                    <div class="tax-slider" id="tax-slider">
+                      <div class="tax-slider-track" aria-hidden="true">
+                        <span class="tax-slider-free" id="tax-slider-free"></span>
+                        <span class="tax-slider-fill" id="tax-slider-fill"></span>
+                      </div>
+                      <span class="tax-slider-mark" id="tax-slider-mark" aria-hidden="true"></span>
+                      <input id="tax-sim-range" type="range" min="0" max="1" step="1" value="0" aria-label="Shares to sell">
+                    </div>
+                    <div class="tax-slider-scale">
+                      <span>0</span>
+                      <span class="tax-slider-free-label" id="tax-slider-free-label"></span>
+                      <span id="tax-slider-max">—</span>
+                    </div>
+                    <div class="tax-quick" id="tax-quick" role="group" aria-label="Quick amounts"></div>
                   </div>
                   <div id="tax-sim-preview"></div>
+                  <button class="btn btn-primary tax-sim-add" id="tax-sim-add" type="button" disabled>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                    Add to plan
+                  </button>
                   <div id="tax-sim-list"></div>
                 </div>
               </div>
@@ -290,13 +305,19 @@
                 <div class="panel-body">
                   <div id="tax-breakdown"></div>
                   <label class="tax-adjust">
-                    <span><strong>Other brokers</strong><small>Net realised result outside DEGIRO this year (loss as negative)</small></span>
-                    <input id="tax-adjust" type="number" inputmode="decimal" step="any" placeholder="€0">
+                    <svg class="settings-row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    <span><strong>Other brokers</strong><small>Net realised result outside DEGIRO (loss as negative)</small></span>
+                    <span class="tax-adjust-field"><em>€</em><input id="tax-adjust" type="number" inputmode="decimal" step="any" placeholder="0"></span>
                   </label>
-                  <details class="tax-rules">
-                    <summary>Rules used</summary>
-                    <ul id="tax-rules-list"></ul>
-                  </details>
+                  <div class="tax-accordion" id="tax-rules">
+                    <button class="tax-accordion-toggle" type="button" aria-expanded="false" aria-controls="tax-rules-body">
+                      <span>Rules used</span>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+                    </button>
+                    <div class="tax-accordion-body" id="tax-rules-body">
+                      <div><ul class="tax-rules-list" id="tax-rules-list"></ul></div>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div class="panel">
@@ -305,6 +326,7 @@
                     <div class="panel-kicker">Realised</div>
                     <h2 id="tax-sales-title">Sales</h2>
                   </div>
+                  <span class="tax-count" id="tax-sales-count"></span>
                 </div>
                 <div class="panel-body" id="tax-sales"></div>
               </div>
