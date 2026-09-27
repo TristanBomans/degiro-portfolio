@@ -236,101 +236,46 @@
         </section>
 
         <section class="view" id="view-tax">
-          <div class="tax-layout">
-            <div class="tax-col">
-              <div class="panel">
-                <div class="panel-header">
-                  <div>
-                    <div class="panel-kicker">Meerwaardebelasting</div>
-                    <h2 id="tax-summary-title">Capital gains</h2>
-                  </div>
-                  <div class="seg seg-compact" id="tax-year" role="group" aria-label="Tax year"></div>
-                </div>
-                <div class="panel-body" id="tax-summary"></div>
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-kicker">Meerwaardebelasting</div>
+                <h2 id="tax-summary-title">Capital gains</h2>
               </div>
-              <div class="panel" id="tax-sim-panel">
-                <div class="panel-header">
-                  <div>
-                    <div class="panel-kicker">What if</div>
-                    <h2>Plan a sale</h2>
-                  </div>
-                  <button class="btn btn-ghost btn-tiny" id="tax-sim-clear" type="button" hidden>Clear plan</button>
-                </div>
-                <div class="panel-body tax-sim-body">
-                  <div class="tax-picker" id="tax-sim-positions" role="radiogroup" aria-label="Position to sell"></div>
-                  <div class="tax-qty">
-                    <div class="tax-qty-head">
-                      <label class="tax-qty-input">
-                        <span class="tax-qty-prefix" id="tax-qty-prefix" hidden>€</span>
-                        <input id="tax-sim-amount" type="number" inputmode="decimal" min="0" step="any" placeholder="0" aria-label="Amount to sell">
-                        <span class="tax-qty-unit" id="tax-qty-unit">shares</span>
-                      </label>
-                      <div class="seg seg-compact" id="tax-sim-mode" role="group" aria-label="Amount in">
-                        <button type="button" data-sim-mode="shares">Shares</button>
-                        <button type="button" data-sim-mode="eur">€</button>
-                      </div>
-                    </div>
-                    <div class="tax-slider" id="tax-slider">
-                      <div class="tax-slider-track" aria-hidden="true">
-                        <span class="tax-slider-free" id="tax-slider-free"></span>
-                        <span class="tax-slider-fill" id="tax-slider-fill"></span>
-                      </div>
-                      <span class="tax-slider-mark" id="tax-slider-mark" aria-hidden="true"></span>
-                      <input id="tax-sim-range" type="range" min="0" max="1" step="1" value="0" aria-label="Shares to sell">
-                    </div>
-                    <div class="tax-slider-scale">
-                      <span>0</span>
-                      <span class="tax-slider-free-label" id="tax-slider-free-label"></span>
-                      <span id="tax-slider-max">—</span>
-                    </div>
-                    <div class="tax-quick" id="tax-quick" role="group" aria-label="Quick amounts"></div>
-                  </div>
-                  <div id="tax-sim-preview"></div>
-                  <button class="btn btn-primary tax-sim-add" id="tax-sim-add" type="button" disabled>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-                    Add to plan
-                  </button>
-                  <div id="tax-sim-list"></div>
-                </div>
+              <div class="seg seg-compact" id="tax-year" role="group" aria-label="Tax year"></div>
+            </div>
+            <div class="panel-body" id="tax-summary"></div>
+            <div class="tax-actions">
+              <button class="settings-row" id="tax-open-sim" type="button">
+                <svg class="settings-row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h10M4 17h6"/><circle cx="17" cy="7" r="2.5"/><circle cx="13" cy="17" r="2.5"/><path d="M19.5 7H20M15.5 17H20"/></svg>
+                <span><strong>Simulate a sale</strong><small id="tax-open-sim-meta">See the tax before you sell</small></span>
+                <svg class="settings-row-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+              </button>
+              <button class="settings-row" id="tax-open-calc" type="button">
+                <svg class="settings-row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8.5 7h7M8.5 11h1M12 11h1M15 11h.5M8.5 14.5h1M12 14.5h1M15 14.5v3M8.5 17.5h1M12 17.5h1"/></svg>
+                <span><strong>How it's calculated</strong><small>Gains, losses and the exemption</small></span>
+                <svg class="settings-row-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="panel" id="tax-plan-panel" hidden>
+            <div class="panel-header">
+              <div>
+                <div class="panel-kicker">What if</div>
+                <h2>Planned sales</h2>
+              </div>
+              <button class="btn btn-ghost btn-tiny" id="tax-plan-clear" type="button">Clear</button>
+            </div>
+            <div class="panel-body tax-list-body" id="tax-plan"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-kicker">Realised</div>
+                <h2 id="tax-sales-title">Sales</h2>
               </div>
             </div>
-            <div class="tax-col">
-              <div class="panel">
-                <div class="panel-header">
-                  <div>
-                    <div class="panel-kicker">Calculation</div>
-                    <h2>How it adds up</h2>
-                  </div>
-                </div>
-                <div class="panel-body">
-                  <div id="tax-breakdown"></div>
-                  <label class="tax-adjust">
-                    <svg class="settings-row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                    <span><strong>Other brokers</strong><small>Net realised result outside DEGIRO (loss as negative)</small></span>
-                    <span class="tax-adjust-field"><em>€</em><input id="tax-adjust" type="number" inputmode="decimal" step="any" placeholder="0"></span>
-                  </label>
-                  <div class="tax-accordion" id="tax-rules">
-                    <button class="tax-accordion-toggle" type="button" aria-expanded="false" aria-controls="tax-rules-body">
-                      <span>Rules used</span>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-                    </button>
-                    <div class="tax-accordion-body" id="tax-rules-body">
-                      <div><ul class="tax-rules-list" id="tax-rules-list"></ul></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div class="panel">
-                <div class="panel-header">
-                  <div>
-                    <div class="panel-kicker">Realised</div>
-                    <h2 id="tax-sales-title">Sales</h2>
-                  </div>
-                  <span class="tax-count" id="tax-sales-count"></span>
-                </div>
-                <div class="panel-body" id="tax-sales"></div>
-              </div>
-            </div>
+            <div class="panel-body tax-list-body" id="tax-sales"></div>
           </div>
         </section>
 
@@ -525,6 +470,87 @@
           </button>
         </div>
       </section>
+    </div>
+  </div>
+
+  <div class="overlay tax-overlay" id="tax-sim-overlay">
+    <div class="dialog dialog-tax" role="dialog" aria-modal="true" aria-labelledby="tax-sim-title">
+      <div class="dialog-handle" aria-hidden="true"></div>
+      <div class="settings-head tax-sheet-head">
+        <button class="btn btn-ghost btn-icon" id="tax-sim-back" type="button" aria-label="Back" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg>
+        </button>
+        <h3 id="tax-sim-title">Simulate a sale</h3>
+        <button class="btn btn-ghost btn-icon" type="button" data-close-tax aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="tax-step" id="tax-step-pick">
+        <div class="settings-kicker">Which position?</div>
+        <div class="settings-group" id="tax-sim-positions"></div>
+        <p class="settings-hint">Priced at the latest known quote. Shares leave oldest first.</p>
+      </div>
+      <div class="tax-step" id="tax-step-amount" hidden>
+        <div class="tax-amount-head">
+          <label class="tax-qty-input">
+            <span class="tax-qty-prefix" id="tax-qty-prefix" hidden>€</span>
+            <input id="tax-sim-amount" type="number" inputmode="decimal" min="0" step="any" placeholder="0" aria-label="Amount to sell">
+            <span class="tax-qty-unit" id="tax-qty-unit">shares</span>
+          </label>
+          <div class="seg seg-compact" id="tax-sim-mode" role="group" aria-label="Amount in">
+            <button type="button" data-sim-mode="shares">Shares</button>
+            <button type="button" data-sim-mode="eur">€</button>
+          </div>
+        </div>
+        <div class="tax-slider" id="tax-slider">
+          <div class="tax-slider-track" aria-hidden="true"><span class="tax-slider-fill"></span></div>
+          <span class="tax-slider-mark" id="tax-slider-mark" aria-hidden="true"></span>
+          <input id="tax-sim-range" type="range" min="0" max="1" step="1" value="0" aria-label="Shares to sell">
+        </div>
+        <div class="tax-slider-scale">
+          <span>0</span>
+          <span id="tax-slider-free-label"></span>
+          <span id="tax-slider-max">—</span>
+        </div>
+        <div class="seg tax-quick" id="tax-quick" role="group" aria-label="Quick amounts"></div>
+        <div class="settings-group tax-result" id="tax-sim-result"></div>
+        <p class="settings-hint" id="tax-sim-basis"></p>
+        <button class="btn btn-primary tax-sim-add" id="tax-sim-add" type="button" disabled>Add to plan</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay tax-overlay" id="tax-calc-overlay">
+    <div class="dialog dialog-tax" role="dialog" aria-modal="true" aria-labelledby="tax-calc-title">
+      <div class="dialog-handle" aria-hidden="true"></div>
+      <div class="settings-head">
+        <h3 id="tax-calc-title">How it adds up</h3>
+        <button class="btn btn-ghost btn-icon" type="button" data-close-tax aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="settings-group" id="tax-breakdown"></div>
+      <section class="settings-section">
+        <div class="settings-kicker">Other brokers</div>
+        <div class="settings-group">
+          <label class="settings-row settings-row-static">
+            <svg class="settings-row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            <span><strong>Realised elsewhere</strong><small>Net result this year, loss as negative</small></span>
+            <span class="tax-adjust-field"><em>€</em><input id="tax-adjust" type="number" inputmode="decimal" step="any" placeholder="0" aria-label="Realised result at other brokers"></span>
+          </label>
+        </div>
+      </section>
+      <section class="settings-section">
+        <div class="settings-kicker">Rules</div>
+        <ul class="tax-rules-list" id="tax-rules-list"></ul>
+      </section>
+    </div>
+  </div>
+
+  <div class="overlay tax-overlay" id="tax-sale-overlay">
+    <div class="dialog dialog-tax" role="dialog" aria-modal="true" aria-labelledby="tax-sale-title">
+      <div class="dialog-handle" aria-hidden="true"></div>
+      <div class="settings-head">
+        <h3 id="tax-sale-title">Sale</h3>
+        <button class="btn btn-ghost btn-icon" type="button" data-close-tax aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div id="tax-sale-body"></div>
     </div>
   </div>
 
