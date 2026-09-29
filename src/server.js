@@ -7,7 +7,7 @@ const { config, col } = require('./config');
 const { getDb, initDb } = require('./database');
 const { resolveTickerFromIsin } = require('./tickerResolver');
 const { fetchStockPrices, fetchManualHoldingPrices, fetchIndexPrices, fetchLiveQuote, persistManualLivePriceSnapshot } = require('./priceFetcher');
-const { processTransactionFile, processAccountFile, processConfirmationRows, previewConfirmationRows } = require('./importData');
+const { processTransactionFile, processAccountFile, processConfirmationRows, previewConfirmationRows, listImportBatches, undoImportBatch } = require('./importData');
 const gmail = require('./gmail');
 const { parseConfirmationEmail } = require('./parseConfirmationEmail');
 
@@ -1674,6 +1674,7 @@ app.post('/api/upload-transactions', upload.single('file'), async (req, res) => 
     // Purge existing transaction data before importing
     db.prepare('DELETE FROM stock_prices').run();
     db.prepare('DELETE FROM transactions').run();
+    db.prepare('DELETE FROM import_batches').run();
     db.prepare('DELETE FROM stocks').run();
 
     const { newTransactions, updatedStocks, stockIdsToFetch } = await processTransactionFile(req.file.buffer, filename);
@@ -1898,6 +1899,21 @@ app.post('/api/gmail/import', async (req, res) => {
     });
   } catch (err) {
     console.error('Mailbox import error:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.get('/api/imports', (_req, res) => {
+  res.json({ success: true, imports: listImportBatches() });
+});
+
+app.post('/api/imports/:id/undo', (req, res) => {
+  try {
+    const removed = undoImportBatch(Number(req.params.id));
+    if (!removed) return res.status(404).json({ success: false, message: 'Import not found or already undone' });
+    res.json({ success: true, removed, message: `Removed ${removed} transaction${removed === 1 ? '' : 's'}` });
+  } catch (err) {
+    console.error('Undo import failed:', err);
     res.status(500).json({ success: false, message: err.message });
   }
 });
@@ -2530,6 +2546,7 @@ app.post('/api/purge-database', (_req, res) => {
 
     db.prepare('DELETE FROM stock_prices').run();
     db.prepare('DELETE FROM transactions').run();
+    db.prepare('DELETE FROM import_batches').run();
     db.prepare('DELETE FROM stocks').run();
     db.prepare('DELETE FROM index_prices').run();
     db.prepare('DELETE FROM indices').run();

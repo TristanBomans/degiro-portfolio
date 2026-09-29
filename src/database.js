@@ -142,7 +142,22 @@ function initDb() {
     );
     CREATE INDEX IF NOT EXISTS idx_manual_holding_prices_holding ON manual_holding_prices(manual_holding_id);
     CREATE INDEX IF NOT EXISTS idx_manual_holding_prices_date ON manual_holding_prices(date);
+
+    -- One row per mailbox import, so it can be undone as a whole.
+    CREATE TABLE IF NOT EXISTS import_batches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      label TEXT,
+      transaction_count INTEGER DEFAULT 0
+    );
   `);
+
+  const transactionColumns = d.prepare('PRAGMA table_info(transactions)').all().map((c) => c.name);
+  if (!transactionColumns.includes('import_batch_id')) {
+    d.exec('ALTER TABLE transactions ADD COLUMN import_batch_id INTEGER');
+  }
+  d.exec('CREATE INDEX IF NOT EXISTS idx_transactions_import_batch ON transactions(import_batch_id)');
 }
 
 module.exports = { getDb, initDb };

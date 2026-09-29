@@ -182,7 +182,7 @@ function isKnownFill(db, seen, { stockId = null, transactionId, quantity, price 
 /**
  * Insert canonical DEGIRO rows without wiping existing data.
  */
-async function importCanonicalRows(rows, scales = { priceScale: 1, eurScale: 1, fxScale: 1 }) {
+async function importCanonicalRows(rows, scales = { priceScale: 1, eurScale: 1, fxScale: 1 }, { batchId = null } = {}) {
   const db = getDb();
   const { priceScale, eurScale, fxScale } = scales;
   let newTransactions = 0;
@@ -208,9 +208,10 @@ async function importCanonicalRows(rows, scales = { priceScale: 1, eurScale: 1, 
   `);
 
   const insertTransaction = db.prepare(`
-    INSERT INTO transactions (stock_id, date, time, quantity, price, currency, value_eur, total_eur, venue, exchange_rate, fees_eur, transaction_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO transactions (stock_id, date, time, quantity, price, currency, value_eur, total_eur, venue, exchange_rate, fees_eur, transaction_id, import_batch_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
+  const insertedLabels = [];
 
   const seenFills = new Map();
   const importAll = db.transaction(() => {
@@ -268,8 +269,10 @@ async function importCanonicalRows(rows, scales = { priceScale: 1, eurScale: 1, 
           row[col('venue')] || '',
           exchangeRate != null && !isNaN(parseFloat(exchangeRate)) ? parseFloat(exchangeRate) / fxScale : null,
           parsedFeesEur,
-          transactionId
+          transactionId,
+          batchId
         );
+        insertedLabels.push({ side: quantity < 0 ? 'Sell' : 'Buy', quantity: Math.abs(quantity), product: row[col('product')] || stock.name || isin });
         newTransactions++;
       } else {
         skippedDuplicates++;
@@ -284,14 +287,59 @@ async function importCanonicalRows(rows, scales = { priceScale: 1, eurScale: 1, 
     updatedStocks,
     skippedDuplicates,
     stockIdsToFetch: [...stockIdsToFetch],
+    insertedLabels,
   };
 }
 
+// "Sell 10 + 20 Amundi Stoxx Europe 600 · Buy 5 Core MSCI World"
+function importLabel(fills) {
+  const groups = new Map();
+  for (const { side, quantity, product } of fills) {
+    const key = `${side} ${product}`;
+    if (!groups.has(key)) groups.set(key, { side, product, quantities: [] });
+    groups.get(key).quantities.push(quantity);
+  }
+  return [...groups.values()].map((g) => `${g.side} ${g.quantities.join(' + ')} ${g.product}`).join(' · ');
+}
+
+// Mailbox fills land in their own batch so the import can be undone later.
 async function processConfirmationRows(rows) {
   if (!rows.length) {
     return { newTransactions: 0, updatedStocks: 0, skippedDuplicates: 0, stockIdsToFetch: [] };
   }
-  return importCanonicalRows(rows, { priceScale: 1, eurScale: 1, fxScale: 1 });
+  const db = getDb();
+  const batchId = db.prepare('INSERT INTO import_batches (source, created_at) VALUES (?, ?)')
+    .run('mail', new Date().toISOString()).lastInsertRowid;
+  try {
+    const result = await importCanonicalRows(rows, { priceScale: 1, eurScale: 1, fxScale: 1 }, { batchId });
+    if (result.newTransactions) {
+      db.prepare('UPDATE import_batches SET label = ?, transaction_count = ? WHERE id = ?')
+        .run(importLabel(result.insertedLabels), result.newTransactions, batchId);
+    } else {
+      db.prepare('DELETE FROM import_batches WHERE id = ?').run(batchId);
+    }
+    return { ...result, batchId: result.newTransactions ? batchId : null };
+  } catch (err) {
+    db.prepare('DELETE FROM import_batches WHERE id = ?').run(batchId);
+    throw err;
+  }
+}
+
+function listImportBatches(limit = 10) {
+  return getDb().prepare(`
+    SELECT b.id, b.source, b.created_at, b.label, COUNT(t.id) AS transaction_count
+    FROM import_batches b JOIN transactions t ON t.import_batch_id = b.id
+    GROUP BY b.id ORDER BY b.created_at DESC LIMIT ?
+  `).all(limit);
+}
+
+function undoImportBatch(batchId) {
+  const db = getDb();
+  return db.transaction(() => {
+    const removed = db.prepare('DELETE FROM transactions WHERE import_batch_id = ?').run(batchId).changes;
+    db.prepare('DELETE FROM import_batches WHERE id = ?').run(batchId);
+    return removed;
+  })();
 }
 
 // Pass one `seen` map across all emails of a scan so a fill sent twice is
@@ -406,4 +454,4 @@ function processAccountFile(buffer) {
   return { newMovements, errors };
 }
 
-module.exports = { processTransactionFile, processAccountFile, processConfirmationEmail, processConfirmationRows, previewConfirmationRows, parseDate };
+module.exports = { processTransactionFile, processAccountFile, processConfirmationEmail, processConfirmationRows, previewConfirmationRows, listImportBatches, undoImportBatch, parseDate };

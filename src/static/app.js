@@ -2236,6 +2236,41 @@
     openOverlay('settings-overlay');
     requestAnimationFrame(() => syncSegIndicator($('theme-mode')));
     loadGmailStatus();
+    loadMailImports();
+  }
+
+  async function loadMailImports() {
+    try {
+      const data = await (await fetch('/api/imports')).json();
+      const imports = data.imports || [];
+      $('mail-imports-block').hidden = !imports.length;
+      $('mail-imports').innerHTML = imports.map((batch) => `
+        <div class="settings-row settings-row-static">
+          <svg class="settings-row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5.5" width="18" height="13" rx="2"/><path d="M4 8l8 6 8-6"/></svg>
+          <span><strong title="${escapeHtml(batch.label || '')}">${escapeHtml(batch.label || 'Mail import')}</strong><small>${new Date(batch.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} · ${batch.transaction_count} ${batch.transaction_count === 1 ? 'fill' : 'fills'}</small></span>
+          <button class="btn btn-outline btn-tiny" type="button" data-undo-import="${batch.id}" data-count="${batch.transaction_count}">Undo</button>
+        </div>`).join('');
+    } catch (err) {
+      console.error('Failed to load mail imports', err);
+    }
+  }
+
+  function undoMailImport(id, count) {
+    closeOverlay('settings-overlay');
+    openConfirm(
+      'Undo mail import',
+      `Remove the ${count} ${count === 1 ? 'fill' : 'fills'} this import added? Scan mail again to add them back.`,
+      'Undo import',
+      async () => {
+        try {
+          const result = await (await fetch(`/api/imports/${id}/undo`, { method: 'POST' })).json();
+          showToast(result.message || (result.success ? 'Import undone' : 'Undo failed'), result.success);
+          if (result.success) setTimeout(() => window.location.reload(), 1200);
+        } catch (err) {
+          showToast(`Undo failed: ${err.message}`, false);
+        }
+      },
+    );
   }
 
   async function loadGmailStatus() {
@@ -3909,6 +3944,10 @@
       if (e.target === $('settings-overlay')) closeOverlay('settings-overlay');
     });
     $('gmail-save-credentials').addEventListener('click', saveGmailCredentials);
+    $('mail-imports').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-undo-import]');
+      if (btn) undoMailImport(Number(btn.dataset.undoImport), Number(btn.dataset.count));
+    });
     document.querySelectorAll('[data-mail-preset]').forEach((btn) => {
       btn.addEventListener('click', () => applyMailboxPreset(btn.dataset.mailPreset));
     });
