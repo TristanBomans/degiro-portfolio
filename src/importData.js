@@ -5,6 +5,7 @@ const XLSX = require('xlsx');
 const { getDb } = require('./database');
 const { config, col } = require('./config');
 const { parseConfirmationEmail } = require('./parseConfirmationEmail');
+const { getTickerForStock } = require('./tickerResolver');
 
 /**
  * Normalize DEGIRO column headers to canonical names by position.
@@ -154,6 +155,30 @@ function detectImpliedDecimalScales(rows) {
   return { priceScale, eurScale, fxScale };
 }
 
+// One order can fill in parts that share its order ID (10 + 20 shares at the
+// same second), so a fill is the order ID plus its quantity and price. Equal
+// fills are matched by count: two identical rows are new until the database
+// holds two of them.
+function fillKey(transactionId, quantity, price) {
+  return `${transactionId}|${quantity}|${Number(price || 0).toFixed(4)}`;
+}
+
+function countStoredFills(db, { stockId = null, transactionId, quantity, price }) {
+  const sql = `SELECT COUNT(*) AS n FROM transactions
+    WHERE transaction_id = ? AND quantity = ? AND ABS(COALESCE(price, 0) - ?) < 0.00005
+    ${stockId != null ? 'AND stock_id = ?' : ''}`;
+  const params = [transactionId, quantity, Number(price || 0)];
+  if (stockId != null) params.push(stockId);
+  return db.prepare(sql).get(...params).n;
+}
+
+function isKnownFill(db, seen, { stockId = null, transactionId, quantity, price }) {
+  const key = `${stockId ?? ''}|${fillKey(transactionId, quantity, price)}`;
+  const matched = seen.get(key) || 0;
+  seen.set(key, matched + 1);
+  return matched < countStoredFills(db, { stockId, transactionId, quantity, price });
+}
+
 /**
  * Insert canonical DEGIRO rows without wiping existing data.
  */
@@ -187,6 +212,7 @@ async function importCanonicalRows(rows, scales = { priceScale: 1, eurScale: 1, 
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
+  const seenFills = new Map();
   const importAll = db.transaction(() => {
     for (const row of rows) {
       const dateVal = row[col('date')];
@@ -227,8 +253,7 @@ async function importCanonicalRows(rows, scales = { priceScale: 1, eurScale: 1, 
       const transactionId = String(row[col('transaction_id')] ?? '');
 
       const existing = transactionId
-        ? db.prepare('SELECT id FROM transactions WHERE stock_id = ? AND transaction_id = ?').get(stock.id, transactionId)
-        : null;
+        && isKnownFill(db, seenFills, { stockId: stock.id, transactionId, quantity, price });
 
       if (!existing) {
         insertTransaction.run(
@@ -269,14 +294,16 @@ async function processConfirmationRows(rows) {
   return importCanonicalRows(rows, { priceScale: 1, eurScale: 1, fxScale: 1 });
 }
 
-function previewConfirmationRows(rows) {
+// Pass one `seen` map across all emails of a scan so a fill sent twice is
+// only offered once.
+function previewConfirmationRows(rows, seen = new Map()) {
   const db = getDb();
   return rows.map((row) => {
     const transactionId = String(row[col('transaction_id')] ?? '');
-    const existing = transactionId
-      ? db.prepare('SELECT id FROM transactions WHERE transaction_id = ?').get(transactionId)
-      : null;
-    return { row, duplicate: Boolean(existing) };
+    const quantity = parseInt(row[col('quantity')], 10) || 0;
+    const price = parseFloat(row[col('price')]) || 0;
+    const duplicate = Boolean(transactionId) && isKnownFill(db, seen, { transactionId, quantity, price });
+    return { row, duplicate };
   });
 }
 

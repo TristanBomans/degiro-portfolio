@@ -1736,9 +1736,10 @@ function prunePendingImports() {
   }
 }
 
-function serializeFill(messageId, emailSubject, row, duplicate) {
+function serializeFill(messageId, emailSubject, row, duplicate, index) {
   return {
-    id: `${messageId}:${row[col('transaction_id')] || crypto.randomBytes(6).toString('hex')}`,
+    // Partial fills of one order share its ID; the position keeps them apart.
+    id: `${messageId}:${index}:${row[col('transaction_id')] || crypto.randomBytes(6).toString('hex')}`,
     messageId,
     emailSubject,
     product: row[col('product')] || '',
@@ -1796,6 +1797,7 @@ app.post('/api/gmail/scan', async (req, res) => {
 
     const fills = [];
     const pendingFills = [];
+    const seenFills = new Map();
     let emailsFailed = 0;
     const parseErrors = [];
 
@@ -1807,8 +1809,8 @@ app.post('/api/gmail/scan', async (req, res) => {
           parseErrors.push(`No transactions parsed from ${email.subject || email.id}`);
           continue;
         }
-        for (const { row, duplicate } of previewConfirmationRows(rows)) {
-          const fill = serializeFill(email.id, email.subject || '', row, duplicate);
+        for (const [index, { row, duplicate }] of previewConfirmationRows(rows, seenFills).entries()) {
+          const fill = serializeFill(email.id, email.subject || '', row, duplicate, index);
           fills.push(fill);
           pendingFills.push({ ...fill, row });
         }
