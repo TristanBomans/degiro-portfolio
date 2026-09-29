@@ -22,8 +22,9 @@ function normalizeColumns(headers) {
     return mapping;
   }
 
-  if (ncols === 18 || ncols === 19) {
-    // 18/19-column format: select specific positions
+  if (ncols >= 17 && ncols <= 19) {
+    // 17/18/19-column format: same positions; newer exports drop the
+    // trailing empty column, older ones carry one or two extra.
     const mapping = {};
     for (const [pos, canonical] of Object.entries(config.DEGIRO_18COL_POSITIONS)) {
       mapping[headers[parseInt(pos)]] = canonical;
@@ -32,7 +33,7 @@ function normalizeColumns(headers) {
   }
 
   throw new Error(
-    `Expected 14, 18, or 19 columns in DEGIRO export, got ${ncols}. Columns: ${headers.join(', ')}`
+    `Expected 14 or 17–19 columns in DEGIRO export, got ${ncols}. Columns: ${headers.join(', ')}`
   );
 }
 
