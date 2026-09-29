@@ -2243,13 +2243,17 @@
     try {
       const data = await (await fetch('/api/imports')).json();
       const imports = data.imports || [];
-      $('mail-imports-block').hidden = !imports.length;
-      $('mail-imports').innerHTML = imports.map((batch) => `
+      $('mail-imports').innerHTML = imports.length ? imports.map((batch) => `
         <div class="settings-row settings-row-static">
           <svg class="settings-row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5.5" width="18" height="13" rx="2"/><path d="M4 8l8 6 8-6"/></svg>
           <span><strong title="${escapeHtml(batch.label || '')}">${escapeHtml(batch.label || 'Mail import')}</strong><small>${new Date(batch.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} · ${batch.transaction_count} ${batch.transaction_count === 1 ? 'fill' : 'fills'}</small></span>
           <button class="btn btn-outline btn-tiny" type="button" data-undo-import="${batch.id}" data-count="${batch.transaction_count}">Undo</button>
-        </div>`).join('');
+        </div>`).join('') : `
+        <div class="settings-row settings-row-static">
+          <svg class="settings-row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+          <span><strong>No imports to undo</strong><small>Fills you add from a scan will show up here</small></span>
+          <span></span>
+        </div>`;
     } catch (err) {
       console.error('Failed to load mail imports', err);
     }
@@ -2301,6 +2305,7 @@
     if (sidebarScan) sidebarScan.hidden = !status.connected;
     if (mobileScan) mobileScan.hidden = !status.connected;
     disconnectBtn.hidden = !status.connected;
+    $('mail-imports-block').hidden = !status.connected;
 
     if (status.connected) {
       $('gmail-account-email').textContent = status.email || 'Connected mailbox';
