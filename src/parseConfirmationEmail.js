@@ -309,8 +309,10 @@ function blockToRow(block) {
   const moneyPrice = parseMoney(block.price);
   const moneyValue = parseMoney(block.value);
   const moneyTotal = parseMoney(block.total);
-  const moneyFees = parseMoney(block.fees || block.totalFees);
-  const qtyAbs = Math.abs(parseEuropeanNumber(block.quantity));
+  const moneyFees = parseMoney(block.totalFees || block.fees);
+  // DEGIRO uses dots to group thousands in share counts ("1.614"),
+  // while its fractional prices and exchange rates use decimal commas.
+  const qtyAbs = Math.abs(parseEuropeanNumber(String(block.quantity || '').replace(/\.(?=\d{3}(?:\.|$))/g, '')));
   if (!qtyAbs) return null;
 
   const isSell = /verkoop|sell|sale/.test(String(block.side || '').toLowerCase());
@@ -331,7 +333,7 @@ function blockToRow(block) {
     totalEur = (valueEur || 0) + (feesEur || 0);
   }
 
-  return {
+  const row = {
     [col('date')]: date,
     [col('time')]: time,
     [col('product')]: block.product || '',
@@ -347,6 +349,27 @@ function blockToRow(block) {
     [col('fees_eur')]: feesEur,
     [col('transaction_id')]: block.orderId || '',
   };
+  validateConfirmationRow(row);
+  return row;
+}
+
+function validateConfirmationRow(row) {
+  const quantity = Number(row[col('quantity')]);
+  const price = Number(row[col('price')]);
+  const value = Number(row[col('value_eur')]);
+  const total = Number(row[col('total_eur')]);
+  const fees = Number(row[col('fees_eur')] || 0);
+  const fail = () => {
+    throw new Error(`Inconsistent amounts in confirmation order ${row[col('transaction_id')] || '(unknown)'}. Check quantity, price and total.`);
+  };
+  if (![quantity, price, value, total, fees].every(Number.isFinite) || !quantity || price <= 0) fail();
+  if (row[col('currency')] === 'EUR') {
+    const expected = -quantity * price;
+    // Allow rounding of the quoted unit price, but reject wrong magnitudes.
+    const tolerance = Math.max(0.05, Math.abs(expected) * 0.001);
+    if (Math.abs(value - expected) > tolerance) fail();
+  }
+  if (Math.abs(total - (value + fees)) > 0.05) fail();
 }
 
 function parseConfirmationSource(raw, filename = '') {
@@ -388,4 +411,5 @@ module.exports = {
   parseEuropeanNumber,
   parseMoney,
   parseConfirmationDateTime,
+  validateConfirmationRow,
 };

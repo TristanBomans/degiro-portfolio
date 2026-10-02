@@ -4,7 +4,7 @@
 const XLSX = require('xlsx');
 const { getDb } = require('./database');
 const { config, col } = require('./config');
-const { parseConfirmationEmail } = require('./parseConfirmationEmail');
+const { parseConfirmationEmail, validateConfirmationRow } = require('./parseConfirmationEmail');
 const { getTickerForStock } = require('./tickerResolver');
 
 /**
@@ -157,27 +157,31 @@ function detectImpliedDecimalScales(rows) {
 }
 
 // One order can fill in parts that share its order ID (10 + 20 shares at the
-// same second), so a fill is the order ID plus its quantity and price. Equal
-// fills are matched by count: two identical rows are new until the database
-// holds two of them.
-function fillKey(transactionId, quantity, price) {
-  return `${transactionId}|${quantity}|${Number(price || 0).toFixed(4)}`;
-}
-
-function countStoredFills(db, { stockId = null, transactionId, quantity, price }) {
-  const sql = `SELECT COUNT(*) AS n FROM transactions
-    WHERE transaction_id = ? AND quantity = ? AND ABS(COALESCE(price, 0) - ?) < 0.00005
-    ${stockId != null ? 'AND stock_id = ?' : ''}`;
-  const params = [transactionId, quantity, Number(price || 0)];
-  if (stockId != null) params.push(stockId);
-  return db.prepare(sql).get(...params).n;
+// same second), so each incoming fill claims one stored row of that order ID
+// with the same quantity; a row is new only when none is left to claim. The
+// price only picks between stored fills: it must not decide on its own, since
+// stored prices can differ from the file by rounding or an implied-decimal
+// scale, and then every row of a full export would be imported again.
+function storedFills(db, seen, stockId, transactionId) {
+  const key = `${stockId ?? ''}|${transactionId}`;
+  if (!seen.has(key)) {
+    const sql = `SELECT quantity, price FROM transactions
+      WHERE transaction_id = ? ${stockId != null ? 'AND stock_id = ?' : ''}`;
+    const params = stockId != null ? [transactionId, stockId] : [transactionId];
+    seen.set(key, db.prepare(sql).all(...params));
+  }
+  return seen.get(key);
 }
 
 function isKnownFill(db, seen, { stockId = null, transactionId, quantity, price }) {
-  const key = `${stockId ?? ''}|${fillKey(transactionId, quantity, price)}`;
-  const matched = seen.get(key) || 0;
-  seen.set(key, matched + 1);
-  return matched < countStoredFills(db, { stockId, transactionId, quantity, price });
+  const unclaimed = storedFills(db, seen, stockId, transactionId);
+  const sameQty = unclaimed
+    .map((f, i) => ({ i, diff: Math.abs(Number(f.price || 0) - Number(price || 0)) }))
+    .filter(({ i }) => unclaimed[i].quantity === quantity);
+  if (!sameQty.length) return false;
+  const closest = sameQty.reduce((a, b) => (b.diff < a.diff ? b : a));
+  unclaimed.splice(closest.i, 1);
+  return true;
 }
 
 /**
@@ -308,6 +312,7 @@ async function processConfirmationRows(rows) {
   if (!rows.length) {
     return { newTransactions: 0, updatedStocks: 0, skippedDuplicates: 0, stockIdsToFetch: [] };
   }
+  rows.forEach(validateConfirmationRow);
   const db = getDb();
   const batchId = db.prepare('INSERT INTO import_batches (source, created_at) VALUES (?, ?)')
     .run('mail', new Date().toISOString()).lastInsertRowid;
