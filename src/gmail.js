@@ -216,7 +216,14 @@ async function fetchConfirmationEmails({ newerThanDays } = {}) {
   if (!settings) throw new Error('Mailbox is not connected');
 
   return withMailbox(settings, async (client) => {
-    await client.mailboxOpen('INBOX', { readOnly: true });
+    let mailboxPath = 'INBOX';
+    if (settings.host.toLowerCase() === 'imap.gmail.com') {
+      // Gmail IMAP searches only the selected folder, even with X-GM-RAW.
+      // Use the special-use flag because the All Mail folder name is localized.
+      const mailboxes = await client.list();
+      mailboxPath = mailboxes.find((mailbox) => mailbox.specialUse === '\\All')?.path || mailboxPath;
+    }
+    await client.mailboxOpen(mailboxPath, { readOnly: true });
     const uids = await searchConfirmationUids(client, { newerThanDays });
     if (!uids?.length) return [];
 
