@@ -2862,6 +2862,12 @@
               </div>
               ${collapsed ? '' : `
                 <div class="perf-lots">
+                  ${!closed && h.latest_price != null ? `
+                    <div class="perf-lot-now">
+                      <span class="perf-lot-now-label">Now</span>
+                      <span class="perf-lot-now-price">${formatPrice(Number(h.latest_price), h.currency || lots[0]?.currency)} <span class="perf-lot-unit">per share</span></span>
+                    </div>
+                  ` : ''}
                   ${lots.map((lot) => {
                     const quantity = Number(lot.remaining_qty) || 0;
                     const purchaseValue = lot.purchase_value_eur != null
