@@ -2218,6 +2218,7 @@
     const overlay = $(id);
     clearTimeout(Number(overlay.dataset.closeTimer));
     overlay.classList.remove('is-closing');
+    resetSheetSwipe(overlay.querySelector('.dialog'));
     overlay.classList.add('show');
   }
 
@@ -2227,6 +2228,7 @@
     overlay.classList.add('is-closing');
     const timer = setTimeout(() => {
       overlay.classList.remove('show', 'is-closing');
+      resetSheetSwipe(overlay.querySelector('.dialog'));
       delete overlay.dataset.closeTimer;
     }, 190);
     overlay.dataset.closeTimer = String(timer);
@@ -2449,6 +2451,7 @@
 
     $('scan-overlay').innerHTML = `
       <div class="dialog dialog-scan" role="dialog" aria-labelledby="scan-title">
+        <div class="dialog-handle" aria-hidden="true"></div>
         <h3 id="scan-title">Mailbox scan</h3>
         <p class="scan-summary">${escapeHtml(summary)}</p>
         <div class="scan-fills">${rows}</div>
@@ -2505,6 +2508,7 @@
   function openConfirm(title, message, confirmLabel, onConfirm) {
     $('confirm-overlay').innerHTML = `
       <div class="dialog" role="dialog">
+        <div class="dialog-handle" aria-hidden="true"></div>
         <h3>${title}</h3>
         <p class="muted-empty" style="text-align:left;padding:0 0 0.5rem;">${message}</p>
         <div class="dialog-actions">
@@ -2524,6 +2528,7 @@
     const today = new Date().toISOString().split('T')[0];
     $('manual-overlay').innerHTML = `
       <div class="dialog" role="dialog">
+        <div class="dialog-handle" aria-hidden="true"></div>
         <h3>Add other-broker holding</h3>
         <div class="form-group"><label for="mh-name">Name</label><input id="mh-name" type="text" placeholder="e.g. Vanguard FTSE All-World"></div>
         <div class="form-group"><label for="mh-ticker">Yahoo ticker</label><input id="mh-ticker" type="text" placeholder="e.g. VWCE.DE"></div>
@@ -3033,7 +3038,7 @@
   }
 
   // On phones the detail is a sheet that grows out of the tapped row and
-  // shrinks back into it; dragging the header down dismisses it.
+  // shrinks back into it; swiping it down dismisses it (bindSheetSwipes).
   const SHEET_EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
   let sheetClosing = null;
 
@@ -3127,36 +3132,103 @@
     anim.finished.then(teardown, teardown);
   }
 
-  function bindSheetDrag() {
-    const overlay = $('performance-overlay');
-    const sheet = $('performance-overlay-sheet');
+  // Every bottom sheet on a phone follows the same gesture: a downward swipe
+  // drags it and a long or quick enough one dismisses it. The swipe can start
+  // anywhere on the sheet, as long as the content under the finger is scrolled
+  // to the top; controls that need their own drag (inputs, sliders, charts)
+  // keep it. Touch events, not pointer events, so the swipe can claim the
+  // gesture before the browser starts scrolling or pull-to-refresh.
+  function bindSheetSwipe(container, { sheet: getSheet, isOpen, dismiss }) {
     let drag = null;
-    sheet.addEventListener('pointerdown', (e) => {
-      if (!state.perfOverlayOpen || !isCompactView() || e.pointerType === 'mouse' || overlay.scrollTop > 0) return;
-      if (!e.target.closest('.panel-header') || e.target.closest('button')) return;
-      drag = { id: e.pointerId, y0: e.clientY, t0: performance.now(), dy: 0 };
-      sheet.style.transition = 'none';
-    });
-    window.addEventListener('pointermove', (e) => {
-      if (!drag || e.pointerId !== drag.id) return;
-      const raw = e.clientY - drag.y0;
-      drag.dy = raw > 0 ? raw : raw / 6;
-      sheet.style.transform = `translateY(${drag.dy}px)`;
-    }, { passive: true });
-    const end = (e) => {
-      if (!drag || e.pointerId !== drag.id) return;
-      const { dy, t0 } = drag;
+    const scrolledBetween = (el, root) => {
+      for (let node = el; node; node = node.parentElement) {
+        if (node.scrollTop > 0) return true;
+        if (node === root) return false;
+      }
+      return false;
+    };
+    container.addEventListener('touchstart', (e) => {
       drag = null;
-      const velocity = dy / Math.max(1, performance.now() - t0);
-      if (dy > 110 || (dy > 30 && velocity > 0.6)) {
-        closePerformanceOverlay({ dragOffset: dy });
+      const sheet = getSheet();
+      if (!sheet || e.touches.length !== 1 || !isOpen() || !isCompactView()) return;
+      if (!sheet.contains(e.target)) return;
+      if (e.target.closest('input, textarea, select, canvas, [contenteditable], [data-no-sheet-swipe]')) return;
+      const t = e.touches[0];
+      drag = { sheet, x0: t.clientX, y0: t.clientY, dy: 0, active: false, samples: [[performance.now(), t.clientY]] };
+    }, { passive: true });
+    container.addEventListener('touchmove', (e) => {
+      if (!drag) return;
+      const t = e.touches[0];
+      const dx = t.clientX - drag.x0;
+      const dy = t.clientY - drag.y0;
+      if (!drag.active) {
+        if (!dx && !dy) return;
+        if (dy <= 0 || Math.abs(dx) > dy || scrolledBetween(e.target, container)) {
+          drag = null;
+          return;
+        }
+        drag.active = true;
+        drag.sheet.style.transition = 'none';
+      }
+      if (e.cancelable) e.preventDefault();
+      drag.dy = dy > 0 ? dy : dy / 6;
+      drag.sheet.style.translate = `0 ${drag.dy}px`;
+      drag.samples.push([performance.now(), t.clientY]);
+      if (drag.samples.length > 5) drag.samples.shift();
+    }, { passive: false });
+    const end = () => {
+      if (!drag) return;
+      const { sheet, dy, active, samples } = drag;
+      drag = null;
+      if (!active) return;
+      const [t0, y0] = samples[0];
+      const [t1, y1] = samples[samples.length - 1];
+      const velocity = (y1 - y0) / Math.max(1, t1 - t0);
+      if (dy > Math.min(140, sheet.offsetHeight * 0.3) || (dy > 24 && velocity > 0.5)) {
+        dismiss(dy, sheet);
         return;
       }
-      sheet.style.transition = 'transform 280ms var(--motion-spring)';
-      sheet.style.transform = '';
+      sheet.style.transition = 'translate 280ms var(--motion-spring)';
+      sheet.style.translate = '';
     };
-    window.addEventListener('pointerup', end);
-    window.addEventListener('pointercancel', end);
+    container.addEventListener('touchend', end);
+    container.addEventListener('touchcancel', end);
+  }
+
+  function resetSheetSwipe(sheet) {
+    if (!sheet) return;
+    sheet.style.translate = '';
+    sheet.style.transition = '';
+  }
+
+  function bindSheetSwipes() {
+    const perfOverlay = $('performance-overlay');
+    bindSheetSwipe(perfOverlay, {
+      sheet: () => $('performance-overlay-sheet'),
+      isOpen: () => state.perfOverlayOpen,
+      dismiss: (dy, sheet) => {
+        // The close animation picks up from the drag offset as a transform.
+        resetSheetSwipe(sheet);
+        closePerformanceOverlay({ dragOffset: dy });
+      },
+    });
+
+    const more = $('mobile-more');
+    bindSheetSwipe(more, {
+      sheet: () => more.querySelector('.mobile-more-sheet'),
+      isOpen: () => !more.hidden && !more.classList.contains('is-closing'),
+      dismiss: () => setMobileMoreOpen(false),
+    });
+
+    ['settings-overlay', 'manual-overlay', 'confirm-overlay', 'scan-overlay', ...TAX_OVERLAYS].forEach((id) => {
+      const overlay = $(id);
+      if (!overlay) return;
+      bindSheetSwipe(overlay, {
+        sheet: () => overlay.querySelector('.dialog'),
+        isOpen: () => overlay.classList.contains('show') && !overlay.classList.contains('is-closing'),
+        dismiss: () => closeOverlay(id),
+      });
+    });
   }
 
   async function openHoldingPerformance(key, trigger = null) {
@@ -3889,6 +3961,7 @@
     if (!menu || !button) return;
     clearTimeout(Number(menu.dataset.closeTimer));
     if (open) {
+      resetSheetSwipe(menu.querySelector('.mobile-more-sheet'));
       menu.hidden = false;
       menu.classList.remove('is-closing');
     } else if (!menu.hidden && !menu.classList.contains('is-closing')) {
@@ -3896,6 +3969,7 @@
       const timer = setTimeout(() => {
         menu.hidden = true;
         menu.classList.remove('is-closing');
+        resetSheetSwipe(menu.querySelector('.mobile-more-sheet'));
         delete menu.dataset.closeTimer;
       }, 190);
       menu.dataset.closeTimer = String(timer);
@@ -4130,7 +4204,7 @@
     bindEvents();
     bindTaxEvents();
     bindTouchFeedback();
-    bindSheetDrag();
+    bindSheetSwipes();
     renderHoldingChangeMode();
     renderLotRangeButtons();
     setInterval(checkServerStatus, 5000);

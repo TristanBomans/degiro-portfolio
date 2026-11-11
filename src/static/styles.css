@@ -2943,6 +2943,7 @@ html.dark .dialog {
     border-bottom: 0;
     border-left: 0;
     border-radius: 1.15rem 1.15rem 0 0;
+    overscroll-behavior: contain;
   }
 
   .dialog-handle {
